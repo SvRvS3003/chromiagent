@@ -17,19 +17,80 @@ const LOCAL_PATHS = new Set(['/mcp', '/cdp']);
 const route = (req) => new URL(req.url, 'http://localhost');
 const WIN = process.platform === 'win32';
 
-// The agent's tool servers, written once at start so no shell has to quote JSON.
-const MCP_CONFIG = path.join(__dirname, 'mcp-config.json');
-fs.writeFileSync(MCP_CONFIG, JSON.stringify({ mcpServers: {
+// ---------- agent CLIs ----------
+// Any CLI started from the panel works in host/workspace: it finds the Chrome tools and the
+// instructions there through the files each CLI already reads (AGENTS.md, opencode.json,
+// .qwen/.gemini settings), so every agent drives the browser the same way.
+const WORKSPACE = path.join(__dirname, 'workspace');
+const PROMPT = path.join(__dirname, 'agent-prompt.md');
+const MCP_SERVERS = {
   chrome: { command: process.execPath, args: [path.join(__dirname, 'mcp.js')] },
   codemode: { command: process.execPath, args: ['--disable-warning=ExperimentalWarning', path.join(__dirname, 'codemode.js')] },
-} }, null, 2));
-const PROMPT = path.join(__dirname, 'agent-prompt.md');
+};
+const MCP_CONFIG = path.join(WORKSPACE, 'mcp-config.json');
 
-// Typed into the user's own shell, so their `claude` alias or function still applies.
-// Chrome-only: Claude Code's built-in shell/file tools are off and no other MCP servers load.
-const q = (s) => (WIN ? `"${s}"` : `'${s.replace(/'/g, `'\\''`)}'`);
-const AGENT_COMMAND = `claude --tools ${WIN ? '""' : "''"} --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`;
-// Windows: cmd.exe passes "" through to claude reliably; Windows PowerShell 5 drops it.
+function writeWorkspace() {
+  const write = (rel, data) => {
+    const file = path.join(WORKSPACE, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+  };
+  const prompt = fs.readFileSync(PROMPT, 'utf8');
+  write('AGENTS.md', prompt);
+  write('mcp-config.json', { mcpServers: MCP_SERVERS });
+  const deny = (action) => ({ action, resource: '*', effect: 'deny' });
+  write('opencode.json', {
+    $schema: 'https://opencode.ai/config.json',
+    mcp: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { type: 'local', command: [v.command, ...v.args], enabled: true }])),
+    default_agent: 'chromiagent',
+    agents: { chromiagent: {
+      description: 'Chromiagent: works only inside the browser',
+      mode: 'all',
+      permissions: ['shell', 'edit', 'read', 'glob', 'grep', 'list', 'subagent'].map(deny),
+    } },
+  });
+  // Qwen Code and Gemini CLI share the settings format.
+  const geminiStyle = {
+    mcpServers: MCP_SERVERS,
+    context: { fileName: ['AGENTS.md'] },
+    tools: { exclude: ['run_shell_command', 'write_file', 'replace', 'edit', 'read_file', 'read_many_files', 'glob', 'search_file_content', 'grep_search', 'list_directory'] },
+  };
+  write('.qwen/settings.json', geminiStyle);
+  write('.gemini/settings.json', geminiStyle);
+}
+writeWorkspace();
+
+// Typed into the user's own shell, so their aliases and functions (e.g. a `claude` wrapper) still apply.
+const q = (s) => (WIN ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`);
+const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`];
+const AGENTS = {
+  // Browser-only: Claude Code's built-in shell/file tools are off and no other MCP servers load.
+  // Windows runs cmd.exe, which passes "" through to claude (Windows PowerShell 5 would drop it).
+  claude: `claude --tools ${WIN ? '""' : "''"} --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`,
+  opencode: 'opencode',
+  // Codex reads AGENTS.md from the folder; its own shell stays read-only.
+  codex: `codex --sandbox read-only ${Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)).map((a) => `-c ${q(a)}`).join(' ')}`,
+  qwen: 'qwen',
+  gemini: 'gemini',
+  shell: '',
+};
+
+// Which CLIs are installed, asked from the user's login shell so its PATH counts.
+let installedAgents = ['shell'];
+(function detectAgents() {
+  const names = Object.keys(AGENTS).filter((a) => a !== 'shell');
+  const { execFile } = require('child_process');
+  const done = (out) => { installedAgents = [...names.filter((n) => out.split(/\r?\n/).some((l) => l.trim() === n)), 'shell']; };
+  if (WIN) {
+    let found = '';
+    let left = names.length;
+    names.forEach((n) => execFile('where', [n], (err) => { if (!err) found += n + '\n'; if (--left === 0) done(found); }));
+  } else {
+    const script = names.map((n) => `command -v ${n} >/dev/null 2>&1 && echo ${n}`).join('; ');
+    execFile(process.env.SHELL || '/bin/bash', ['-ilc', script], { timeout: 20000 }, (_, stdout) => done(String(stdout || '')));
+  }
+})();
+
 const SHELL = WIN ? [process.env.COMSPEC || 'cmd.exe', []] : [process.env.SHELL || '/bin/bash', ['-il']];
 
 const wss = new WebSocketServer({
@@ -56,6 +117,7 @@ wss.on('connection', (ws, req) => {
   if (pathname === '/bridge') return onBridge(ws, panel);
   if (pathname === '/mcp') return onMcp(ws, panel);
   if (pathname === '/cdp') return onCdp(ws, panel);
+  if (pathname === '/agents') return ws.close(1000, JSON.stringify(installedAgents));
   onTerminal(ws);
 });
 
@@ -113,11 +175,13 @@ const KEEP_DETACHED_MS = 12 * 60 * 60 * 1000;
 const REPLAY_BYTES = 512 * 1024;
 
 function spawnSession(panel, msg) {
+  // `agent: true` is what panels from 1.3 and earlier send.
+  const agent = msg.agent === true ? 'claude' : (Object.hasOwn(AGENTS, msg.agent) ? msg.agent : 'shell');
   const term = pty.spawn(SHELL[0], SHELL[1], {
     name: 'xterm-256color',
     cols: msg.cols || 80,
     rows: msg.rows || 24,
-    cwd: os.homedir(),
+    cwd: agent === 'shell' ? os.homedir() : WORKSPACE,
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: process.env.LANG || 'en_US.UTF-8', CHROMIAGENT_PANEL: panel },
   });
   const session = { term, buf: '', ws: null, timer: null };
@@ -130,7 +194,7 @@ function spawnSession(panel, msg) {
     if (sessions.get(panel) === session) sessions.delete(panel);
     if (isOpen(session.ws)) session.ws.close();
   });
-  if (msg.agent) term.write(`${AGENT_COMMAND}\r`);
+  if (AGENTS[agent]) term.write(`${AGENTS[agent]}\r`);
   return session;
 }
 

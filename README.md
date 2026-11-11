@@ -64,6 +64,20 @@ Chrome's built-in Gemini panel is good for chatting about a page. Chromiagent is
 
 *Gemini details are from Google's 2026 announcements and press coverage. Availability changes, so check what is offered in your region.*
 
+## Any agent CLI
+
+Pick the agent in the panel header. Every installed CLI gets the same browser tools (the tab tools and TypeScript code mode) and the same instructions, through the files it already reads in Chromiagent's workspace folder:
+
+| CLI | How it gets the browser tools | Kept inside the browser |
+|---|---|---|
+| Claude Code | `--mcp-config` + `--append-system-prompt-file` | built-in shell and file tools switched off |
+| opencode | `opencode.json` + `AGENTS.md` | a `chromiagent` agent that denies shell, read, edit, glob, grep, list |
+| Codex | `-c mcp_servers…` + `AGENTS.md` | shell sandboxed read-only |
+| Qwen Code / Gemini CLI | `.qwen` / `.gemini` `settings.json` + `AGENTS.md` | shell and file tools excluded |
+| Shell | — | a plain terminal in your home folder |
+
+Codex asks once whether to trust the folder, and Qwen Code asks once to approve the two MCP servers: answer yes the first time. The terminal renders with WebGL and Unicode 11, so full-screen TUIs like opencode and Codex stay fast and draw correctly.
+
 ## Point at an element
 
 Click the select icon in the panel header, hover any element on the page and click it. A small card opens next to the element: type what you want and press **`Ctrl+Enter`** (or `Cmd+Enter`). The agent receives your feedback together with the element's selector, tag, text, size and HTML, so it knows exactly what you mean. `Esc` cancels.
@@ -136,7 +150,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 
 - **`extension/`** is the browser extension: the side panel, a terminal (xterm.js), the element picker, and a bridge that runs the agent's tool calls through `chrome.tabs`, `chrome.scripting` and `chrome.debugger`.
 - **`host/server.js`** is a small local server on `127.0.0.1:17371`. It gives the panel a real shell (node-pty: zsh or bash on macOS and Linux, cmd on Windows), keeps sessions alive while the panel is closed, and passes tool calls between the agent and the panel. It starts at login (launchd on macOS, a systemd user service on Linux, the Startup folder on Windows).
-- The agent is Claude Code started with only two tool servers: the tab tools (`host/mcp.js`) and code mode (`host/codemode.js`, which runs Playwright MCP).
+- The agent is the CLI you pick, started in `host/workspace` (written by the host) with only two tool servers: the tab tools (`host/mcp.js`) and code mode (`host/codemode.js`, which runs Playwright MCP).
 - **One panel, one browser.** Every panel has its own id. The agent started in a panel only ever drives the browser that panel is open in.
 
 ## Safety

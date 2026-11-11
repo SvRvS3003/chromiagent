@@ -38,6 +38,8 @@ header .sparkle {
   -webkit-mask: url(sparkle.svg) center / contain no-repeat; mask: url(sparkle.svg) center / contain no-repeat;
 }
 .name { font-size: 14px; color: var(--text); }
+#agent { border: 1px solid #2c2d2f; border-radius: 8px; padding: 3px 6px; background: #1e1f20; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+#agent:focus-visible { outline: 2px solid #39ff14; outline-offset: 1px; }
 #termview { padding: 6px 4px 8px 10px; }
 #term { height: 100%; }
 .xterm .xterm-viewport { background: transparent !important; }

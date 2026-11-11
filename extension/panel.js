@@ -7,17 +7,27 @@ async function startSession(fresh = false) {
   endSession();
   const { id: panel } = await panelReady;
   const term = new Terminal({
-    fontFamily: 'Menlo, "SF Mono", monospace', fontSize: 12.5, cursorBlink: true, allowTransparency: true,
-    theme: { background: '#00000000', foreground: '#e3e3e3', cursor: '#8ab4f8', selectionBackground: '#3c4a6b' },
+    fontFamily: 'Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace', fontSize: 12.5, cursorBlink: true,
+    allowProposedApi: true, macOptionIsMeta: true, scrollback: 5000,
+    theme: { background: '#131314', foreground: '#e3e3e3', cursor: '#39ff14', selectionBackground: '#2f4a2a' },
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  // Unicode 11 widths keep emoji and box drawing aligned in full-screen TUIs (opencode, codex...).
+  term.loadAddon(new Unicode11Addon.Unicode11Addon());
+  term.unicode.activeVersion = '11';
   term.open($('term'));
+  // GPU rendering keeps busy TUIs smooth; the DOM renderer takes over if WebGL is unavailable.
+  try {
+    const gl = new WebglAddon.WebglAddon();
+    gl.onContextLoss(() => gl.dispose());
+    term.loadAddon(gl);
+  } catch {}
   fit.fit();
 
   const ws = new WebSocket(HOST);
   const send = (m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
-  ws.onopen = () => send({ type: 'start', agent: true, panel, fresh, cols: term.cols, rows: term.rows });
+  ws.onopen = () => send({ type: 'start', agent: $('agent').value, panel, fresh, cols: term.cols, rows: term.rows });
   ws.onmessage = (e) => term.write(e.data);
   ws.onclose = (e) => term.write(e.wasClean
     ? '\r\n\x1b[90m[session ended - press + for a new terminal]\x1b[0m\r\n'
@@ -76,7 +86,24 @@ chrome.runtime.onMessage.addListener(async (msg, sender) => {
   session.term.focus();
 });
 
+// ---- agent picker: any installed CLI (Claude Code, opencode, Codex, Qwen, Gemini) or a plain shell ----
+const AGENT_NAMES = { claude: 'Claude Code', opencode: 'opencode', codex: 'Codex', qwen: 'Qwen Code', gemini: 'Gemini CLI', shell: 'Shell' };
+const savedAgent = () => { try { return localStorage.getItem('chromiagent.agent'); } catch { return null; } };
+function fillAgents(list) {
+  const pick = list.includes(savedAgent()) ? savedAgent() : list[0];
+  $('agent').replaceChildren(...list.map((a) => new Option(AGENT_NAMES[a] || a, a, false, a === pick)));
+}
+$('agent').onchange = () => {
+  try { localStorage.setItem('chromiagent.agent', $('agent').value); } catch {}
+  startSession(true); // a different CLI means a new session
+};
+// The host reports the installed CLIs in the close reason of a one-shot socket.
+const loadAgents = () => new Promise((resolve) => {
+  const ws = new WebSocket(`${HOST}/agents`);
+  ws.onclose = (e) => { try { fillAgents(JSON.parse(e.reason)); } catch {} resolve(); };
+});
+
 // Closing the browser's side panel keeps the agent running; these two buttons end it.
 $('restart').onclick = () => startSession(true);
 $('close').onclick = () => { session?.send({ type: 'kill' }); setTimeout(() => window.close(), 50); };
-startSession();
+loadAgents().then(() => startSession());
