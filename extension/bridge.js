@@ -1,7 +1,18 @@
 // Chromiagent bridge, by SvRvS: runs in the side panel and executes the agent's tool calls on any tab.
 // Each panel has its own id; the agent started from it is bound to this browser only.
-const PANEL = crypto.randomUUID();
-const BRIDGE = `ws://127.0.0.1:17371/bridge?panel=${PANEL}`;
+// The id is kept per window for the browser session, so closing and reopening the panel resumes
+// the same agent; a new browser session starts fresh.
+const panelReady = (async () => {
+  const { id: windowId } = await chrome.windows.getCurrent();
+  const key = `panel:${windowId}`;
+  // Without the storage permission (extension not reloaded after an update) each opening is a new session.
+  if (!chrome.storage?.session) return { id: crypto.randomUUID(), windowId };
+  const saved = (await chrome.storage.session.get(key))[key];
+  if (saved) return { id: saved, windowId };
+  const id = crypto.randomUUID();
+  await chrome.storage.session.set({ [key]: id });
+  return { id, windowId };
+})();
 // The agent stays inside the web: local files via file:// are refused everywhere.
 const noFile = (url) => { if (/^\s*file:/i.test(url || '')) throw new Error('file:// URLs are blocked (Chrome web tasks only)'); };
 
@@ -138,8 +149,8 @@ async function waitLoaded(tabId, ms = 15000) {
   }
 }
 
-function connectBridge() {
-  const ws = new WebSocket(BRIDGE);
+async function connectBridge() {
+  const ws = new WebSocket(`ws://127.0.0.1:17371/bridge?panel=${(await panelReady).id}`);
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data);
     if (msg.cdpOpen) return cdp.open((m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ cdp: m })));

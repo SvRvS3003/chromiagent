@@ -2,17 +2,27 @@
 // Chromiagent code mode, by SvRvS.
 // One MCP tool, `run_typescript`: the agent writes a TypeScript script that calls the Playwright MCP and
 // Chromiagent tab tools as typed async functions (`playwright.*`, `chrome.*`), so a whole multi-step task
-// runs in one call. Started by host/sandbox.sh; the child servers inherit the sandbox.
-const { spawn } = require('child_process');
+// runs in one call.
+// Safety, the same on Windows, macOS and Linux: agent scripts run in host/runner.js and Playwright MCP
+// (whose browser_run_code_unsafe also runs agent code) runs as its own process, both under Node's
+// permission model: no reading or writing the user's files, no starting programs.
+const { spawn, fork } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { stripTypeScriptTypes } = require('node:module');
 
-const DIR = path.join(__dirname, '..');
-const OUT = process.env.CHROMIAGENT_OUT;
+const DIR = fs.realpathSync(path.join(__dirname, '..'));
+// Short on Unix: Playwright opens sockets in here, and socket paths max out near 104 bytes.
+const OUT = process.platform === 'win32' ? path.join(os.tmpdir(), 'chromiagent-playwright') : '/tmp/chromiagent-pw';
+fs.mkdirSync(OUT, { recursive: true });
+const OUT_REAL = fs.realpathSync(OUT);
+// Playwright keeps caches under the home and temp folders; point them at the scratch folder it may use.
+const SCRATCH_ENV = { HOME: OUT_REAL, USERPROFILE: OUT_REAL, LOCALAPPDATA: OUT_REAL, XDG_CACHE_HOME: OUT_REAL, TMPDIR: OUT_REAL, TEMP: OUT_REAL, TMP: OUT_REAL };
 
 // ---------- minimal MCP stdio client ----------
-function mcpClient(command, args) {
-  const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+function mcpClient(command, args, env) {
+  const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, ...env } });
   const waiting = new Map();
   let buf = '';
   let seq = 0;
@@ -41,7 +51,11 @@ function mcpClient(command, args) {
 
 const servers = {
   chrome: mcpClient(process.execPath, [path.join(__dirname, 'mcp.js')]),
-  playwright: mcpClient(process.execPath, [path.join(DIR, 'node_modules/@playwright/mcp/cli.js'), '--cdp-endpoint', `ws://127.0.0.1:17371/cdp?panel=${process.env.CHROMIAGENT_PANEL || ''}`, '--output-dir', OUT]),
+  playwright: mcpClient(process.execPath, [
+    '--permission', `--allow-fs-read=${DIR}`, `--allow-fs-read=${OUT_REAL}`, `--allow-fs-write=${OUT_REAL}`, '--allow-worker',
+    path.join(DIR, 'node_modules', '@playwright', 'mcp', 'cli.js'),
+    '--cdp-endpoint', `ws://127.0.0.1:17371/cdp?panel=${process.env.CHROMIAGENT_PANEL || ''}`, '--output-dir', OUT_REAL,
+  ], SCRATCH_ENV),
 };
 
 // ---------- JSON Schema -> TypeScript declarations ----------
@@ -80,18 +94,34 @@ const asText = (r) => {
   if (r.isError) throw new Error(text);
   return text;
 };
-const proxy = (client) => new Proxy({}, { get: (_, name) => async (args) => asText(await client.call(String(name), args)) });
-
-async function runTypeScript(code) {
-  const logs = [];
-  const log = (...a) => logs.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x, null, 1))).join(' '));
+// The script runs in a fresh, permission-restricted process; its tool calls come back here over IPC.
+function runTypeScript(code) {
   const js = stripTypeScriptTypes(`async function __main(chrome, playwright, console) {\n${code}\n}`, { mode: 'strip' });
-  const main = new Function(`${js}\nreturn __main;`)();
-  const result = await Promise.race([
-    main(proxy(servers.chrome), proxy(servers.playwright), { log, info: log, warn: log, error: log }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Script timed out after 5 minutes')), 300000)),
-  ]);
-  return [logs.length ? `console:\n${logs.join('\n')}` : '', `result:\n${result === undefined ? 'undefined' : typeof result === 'string' ? result : JSON.stringify(result, null, 1)}`].filter(Boolean).join('\n\n');
+  const child = fork(path.join(__dirname, 'runner.js'), [], {
+    execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Script timed out after 5 minutes')); }, 300000);
+    child.on('message', async (msg) => {
+      if (msg.type === 'call') {
+        try {
+          if (!servers[msg.ns]) throw new Error(`Unknown API ${msg.ns}`);
+          child.send({ type: 'reply', id: msg.id, text: asText(await servers[msg.ns].call(msg.name, msg.args)) });
+        } catch (e) {
+          child.send({ type: 'reply', id: msg.id, error: String(e.message || e) });
+        }
+        return;
+      }
+      clearTimeout(timer);
+      child.kill();
+      if (msg.error) return reject(new Error([msg.logs.length ? `console:\n${msg.logs.join('\n')}` : '', msg.error].filter(Boolean).join('\n\n')));
+      const r = msg.result;
+      resolve([msg.logs.length ? `console:\n${msg.logs.join('\n')}` : '', `result:\n${r === null ? 'undefined' : typeof r === 'string' ? r : JSON.stringify(r, null, 1)}`].filter(Boolean).join('\n\n'));
+    });
+    child.on('exit', (c) => { clearTimeout(timer); reject(new Error(`Script process exited (${c})`)); });
+    child.send({ type: 'run', js });
+  });
 }
 
 // ---------- MCP server (stdio) ----------

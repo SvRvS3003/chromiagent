@@ -1,17 +1,40 @@
 {
-  "name": "chromiagent",
-  "version": "1.2.0",
-  "description": "A terminal in Chrome side panel running an AI agent that controls every open tab, with Playwright and TypeScript code mode.",
+  "name": "@svrvs3003/chromiagent",
+  "version": "1.3.0",
+  "description": "Agent side panel for Chromium browsers: a real terminal and an AI agent that sees and drives every open tab, with Playwright, TypeScript code mode and an element picker. Windows, macOS, Linux.",
   "author": "SvRvS",
   "license": "MIT",
-  "private": true,
+  "homepage": "https://github.com/SvRvS3003/chromiagent#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SvRvS3003/chromiagent.git"
+    "url": "git+https://github.com/SvRvS3003/chromiagent.git"
+  },
+  "keywords": [
+    "chrome-extension",
+    "side-panel",
+    "ai-agent",
+    "claude-code",
+    "playwright",
+    "mcp",
+    "browser-automation",
+    "terminal"
+  ],
+  "files": [
+    "extension/",
+    "host/",
+    "install.sh",
+    "install.ps1",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "engines": {
+    "node": ">=22.13"
   },
   "scripts": {
-    "host": "node host/server.js",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper"
+    "host": "node host/server.js"
   },
   "dependencies": {
     "@playwright/mcp": "0.0.85",
@@ -21,8 +44,5 @@
   "devDependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0"
-  },
-  "engines": {
-    "node": ">=22.13"
   }
 }

@@ -4,9 +4,11 @@
 
 # Chromiagent
 
-**A terminal in Chrome's side panel, running an AI agent that can see and drive every open tab.**
+**A terminal in your browser's side panel, running an AI agent that can see and drive every open tab.**
 
-Made by **SvRvS** · MIT License · macOS
+Made by **SvRvS** · MIT License
+
+Windows · macOS · Linux — Chrome · Edge · Brave · Vivaldi · Opera · Arc
 
 ![Chromiagent in Chrome](docs/hero.png)
 
@@ -14,18 +16,35 @@ Made by **SvRvS** · MIT License · macOS
 
 ## Install
 
+**macOS and Linux** (Terminal):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.sh | bash
 ```
 
-The command downloads Chromiagent to `~/.chromiagent`, installs it, starts the local host and opens `chrome://extensions`. Then:
+**Windows** (PowerShell):
 
-1. Turn on **Developer mode** (top right).
-2. Click **Load unpacked**, press `Cmd+Shift+G`, paste with `Cmd+V` (the folder path is already copied), press Enter, then **Select**.
-3. Click the puzzle icon in the toolbar and **pin Chromiagent**.
-4. Click the ✦ icon, or press `Alt+A`. The panel opens and the agent starts.
+```powershell
+irm https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.ps1 | iex
+```
 
-**Requirements:** macOS, Google Chrome, [Node.js](https://nodejs.org) 22.13+, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`, signed in).
+The command downloads Chromiagent to `~/.chromiagent`, installs it, starts the local host (and sets it to start at login) and copies the extension folder path. Then, in your browser:
+
+1. Open the extensions page: `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and choose the `~/.chromiagent/extension` folder. The path is already copied, so you can paste it into the folder dialog.
+4. Click the puzzle icon in the toolbar and **pin Chromiagent**.
+5. Click the ✦ icon, or press `Alt+A`. The panel opens and the agent starts.
+
+**Requirements:** [Node.js](https://nodejs.org) 22.13+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`, signed in once). On Linux, the terminal module is compiled during install, so `make`, a C++ compiler and `python3` are needed (`sudo apt install build-essential python3`).
+
+### Browsers
+
+| Browser | How the panel opens |
+|---|---|
+| Chrome, Edge, Brave, Vivaldi | Docked side panel, like Gemini |
+| Opera, Arc and other Chromium browsers without the side panel API | The same panel in a slim window |
+| Firefox, Safari | Not supported: they have no `chrome.debugger` API, which tab control and Playwright need |
 
 ## Why it exists
 
@@ -44,6 +63,18 @@ Chrome's built-in Gemini panel is good for chatting about a page. Chromiagent is
 | Source | Open, MIT | Closed |
 
 *Gemini details are from Google's 2026 announcements and press coverage. Availability changes, so check what is offered in your region.*
+
+## Point at an element
+
+Click the select icon in the panel header, hover any element on the page and click it. A small card opens next to the element: type what you want and press **`Ctrl+Enter`** (or `Cmd+Enter`). The agent receives your feedback together with the element's selector, tag, text, size and HTML, so it knows exactly what you mean. `Esc` cancels.
+
+![Point at an element and send feedback](docs/grab.png)
+
+Values typed into form fields are never sent. The element picker is adapted from [Orca](https://github.com/stablyai/orca)'s browser grab mode (MIT).
+
+## Sessions
+
+Closing the panel keeps the agent running. Open it again in the same window and you are back in the same session, with the conversation where you left it. The **+** button in the panel starts a new session and **✕** ends it. A session that stays closed for 12 hours ends on its own.
 
 ## What you can ask
 
@@ -103,37 +134,49 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 
 ![How it works](docs/how.png)
 
-- **`extension/`** is the Chrome extension: the side panel, a terminal (xterm.js), and a bridge that runs the agent's tool calls through `chrome.tabs`, `chrome.scripting` and `chrome.debugger`.
-- **`host/server.js`** is a small local server on `127.0.0.1:17371`. It gives the panel a real shell (node-pty) and passes tool calls between the agent and the panel. It starts automatically at login.
-- **`host/agent.sh`** starts Claude Code with only two tool servers: the tab tools (`host/mcp.js`) and code mode (`host/codemode.js`, which runs Playwright MCP).
+- **`extension/`** is the browser extension: the side panel, a terminal (xterm.js), the element picker, and a bridge that runs the agent's tool calls through `chrome.tabs`, `chrome.scripting` and `chrome.debugger`.
+- **`host/server.js`** is a small local server on `127.0.0.1:17371`. It gives the panel a real shell (node-pty: zsh or bash on macOS and Linux, cmd on Windows), keeps sessions alive while the panel is closed, and passes tool calls between the agent and the panel. It starts at login (launchd on macOS, a systemd user service on Linux, the Startup folder on Windows).
+- The agent is Claude Code started with only two tool servers: the tab tools (`host/mcp.js`) and code mode (`host/codemode.js`, which runs Playwright MCP).
 - **One panel, one browser.** Every panel has its own id. The agent started in a panel only ever drives the browser that panel is open in.
 
 ## Safety
 
 - **Chrome only.** In the panel, Claude Code's own shell and file tools are switched off and other MCP servers are not loaded. `file://` pages cannot be opened or read.
-- **Sandboxed code mode.** Code mode and Playwright run inside a macOS sandbox (`sandbox-exec`) that blocks reading and writing your home folder. Scripts, including `browser_run_code_unsafe`, cannot touch your files, even if they reach Node's `fs` or start a process.
+- **Sandboxed code mode.** Agent scripts and Playwright run under Node's permission model (`--permission`), the same on every operating system. They cannot read or write your files or start programs: even code that escapes Playwright's VM and reaches Node's `fs` or `child_process` gets `ERR_ACCESS_DENIED`.
 - **Local only.** The host listens on `127.0.0.1`, and it accepts the terminal and bridge only from this extension's ID. Websites cannot connect to it.
 - **It acts as you.** The agent uses your logged-in Chrome sessions. Watch what it does and use `Ctrl+C` to stop it. Code mode, `run_js` and `press_key` show Chrome's "is debugging this browser" bar while they are attached.
 
 ## Update / uninstall
 
-```bash
-# update: run the installer again
-curl -fsSL https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.sh | bash
+Update: run the install command again, then press reload (↻) on Chromiagent in the extensions page.
 
-# uninstall: then remove the extension in chrome://extensions
+```bash
+# macOS / Linux: uninstall, then remove the extension on the extensions page
 curl -fsSL https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.sh | bash -s -- --uninstall
+```
+
+```powershell
+# Windows: uninstall, then remove the extension on the extensions page
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.ps1))) -Uninstall
 ```
 
 ## Troubleshooting
 
-- **"Host not reachable" in the panel:** run the installer again, then check `/tmp/chromiagent.log`.
-- **`claude: command not found`:** install Claude Code and sign in once by running `claude` in Terminal.
+- **"Host not reachable" in the panel:** run the installer again, then check `chromiagent.log` in your temp folder (`$TMPDIR` on macOS, `/tmp` on Linux, `%TEMP%` on Windows).
+- **`claude: command not found`:** install Claude Code and sign in once by running `claude` in a terminal.
 - **The panel opens but the agent can't see tabs:** close and reopen the panel. The bridge connects when the panel opens.
 
 ## O'zbekcha
 
-Chromiagent: Chrome yon panelidagi terminal. Undagi AI agent barcha ochiq tablarni ko'radi va boshqaradi: o'qiydi, bosadi, yozadi, JS ishlatadi, skrinshot oladi. Murakkab vazifalarda agent o'zi TypeScript code mode'ga o'tadi: Playwright (`browser_evaluate`, `browser_run_code_unsafe`) sizning ochiq Chrome'ingizda ishlaydi. O'rnatish uchun yuqoridagi buyruqni Terminal'da ishga tushiring, keyin `chrome://extensions` → Developer mode → Load unpacked → pin. Panel `Alt+A` bilan ochiladi. Agent faqat Chrome ichida ishlaydi va kompyuterdagi fayllarga tegmaydi.
+Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamda barcha Chromium brauzerlarida ishlaydi (Chrome, Edge, Brave, Vivaldi, Opera, Arc). Undagi AI agent barcha ochiq tablarni ko'radi va boshqaradi. Murakkab vazifalarda u o'zi TypeScript code mode'ga o'tadi va Playwright'ni (`browser_evaluate`, `browser_run_code_unsafe`) sizning ochiq brauzeringizda ishlatadi.
+
+**Element belgilash:** paneldagi belgilash tugmasini bosing, sahifadagi elementni tanlang, izoh yozing va `Ctrl+Enter` bosing. Izoh element ma'lumotlari bilan birga agentga yuboriladi.
+
+**Sessiya:** panelni yopib qayta ochsangiz, sessiya davom etadi. `+` yangi sessiya ochadi, `✕` sessiyani tugatadi.
+
+**O'rnatish:** macOS/Linux'da `install.sh`, Windows'da `install.ps1` buyrug'ini ishga tushiring. Keyin kengaytmalar sahifasida Developer mode → Load unpacked → pin qiling. Panel `Alt+A` bilan ochiladi.
+
+Agent faqat brauzer ichida ishlaydi va kompyuterdagi fayllarga tegmaydi.
 
 ---
 
