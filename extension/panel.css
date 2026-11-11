@@ -34,7 +34,7 @@ header { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; }
 main { flex: 1; min-height: 0; }
 header .sparkle {
   width: 18px; height: 18px; margin-left: 4px;
-  background: conic-gradient(from 225deg, #4285f4, #9b72cb, #d96570, #fbbc04, #34a853, #4285f4);
+  background: conic-gradient(from 225deg, #39ff14, #c8ffb8, #ffffff, #00ff88, #39ff14);
   -webkit-mask: url(sparkle.svg) center / contain no-repeat; mask: url(sparkle.svg) center / contain no-repeat;
 }
 .name { font-size: 14px; color: var(--text); }
