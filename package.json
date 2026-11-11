@@ -1,7 +1,7 @@
 {
   "name": "chromiagent",
-  "version": "1.1.0",
-  "description": "A terminal side panel for Chrome that runs an AI agent with control over every open tab.",
+  "version": "1.2.0",
+  "description": "A terminal in Chrome side panel running an AI agent that controls every open tab, with Playwright and TypeScript code mode.",
   "author": "SvRvS",
   "license": "MIT",
   "private": true,
@@ -14,11 +14,15 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper"
   },
   "dependencies": {
+    "@playwright/mcp": "0.0.85",
     "node-pty": "^1.1.0",
     "ws": "^8.22.2"
   },
   "devDependencies": {
-    "@xterm/xterm": "^6.0.0",
-    "@xterm/addon-fit": "^0.11.0"
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

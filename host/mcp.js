@@ -30,7 +30,7 @@ const waiting = new Map();
 function connect() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) return resolve(ws);
-    const s = new WebSocket('ws://127.0.0.1:17371/mcp');
+    const s = new WebSocket(`ws://127.0.0.1:17371/mcp?panel=${process.env.CHROMIAGENT_PANEL || ''}`);
     s.on('open', () => { ws = s; resolve(s); });
     s.on('error', reject);
     s.on('message', (raw) => {

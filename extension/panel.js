@@ -16,7 +16,7 @@ function startSession() {
 
   const ws = new WebSocket(HOST);
   const send = (m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
-  ws.onopen = () => send({ type: 'start', agent: true, cols: term.cols, rows: term.rows });
+  ws.onopen = () => send({ type: 'start', agent: true, panel: PANEL, cols: term.cols, rows: term.rows });
   ws.onmessage = (e) => term.write(e.data);
   ws.onclose = (e) => term.write(e.wasClean
     ? '\r\n\x1b[90m[session ended - press + for a new terminal]\x1b[0m\r\n'

@@ -22,8 +22,9 @@ fi
 
 [ "$(uname)" = "Darwin" ] || die "Chromiagent currently supports macOS only."
 command -v git >/dev/null || die "git is required. Run: xcode-select --install"
-NODE="$(command -v node)" || die "Node.js 18+ is required: https://nodejs.org"
-[ "$("$NODE" -p 'process.versions.node.split(".")[0]')" -ge 18 ] || die "Node.js 18+ is required (found $("$NODE" -v))."
+NODE="$(command -v node)" || die "Node.js 22.13+ is required: https://nodejs.org"
+"$NODE" -e 'process.exit(typeof require("node:module").stripTypeScriptTypes === "function" ? 0 : 1)' 2>/dev/null \
+  || die "Node.js 22.13+ is required for TypeScript code mode (found $("$NODE" -v))."
 command -v claude >/dev/null || say "Claude Code was not found. Install it before using the panel: npm install -g @anthropic-ai/claude-code"
 
 say "Downloading to $DIR"
@@ -32,7 +33,7 @@ if [ -d "$DIR/.git" ]; then git -C "$DIR" pull -q --ff-only; else git clone -q -
 say "Installing dependencies"
 (cd "$DIR" && npm install --omit=dev --no-audit --no-fund --silent)
 # npm may skip install scripts; node-pty's helper must be executable or the terminal cannot start.
-chmod +x "$DIR"/node_modules/node-pty/prebuilds/*/spawn-helper "$DIR/host/agent.sh"
+chmod +x "$DIR"/node_modules/node-pty/prebuilds/*/spawn-helper "$DIR"/host/*.sh
 
 say "Starting the local host (starts again automatically at login)"
 mkdir -p "$(dirname "$PLIST")"

@@ -1,5 +1,7 @@
 // Chromiagent bridge, by SvRvS: runs in the side panel and executes the agent's tool calls on any tab.
-const BRIDGE = 'ws://127.0.0.1:17371/bridge';
+// Each panel has its own id; the agent started from it is bound to this browser only.
+const PANEL = crypto.randomUUID();
+const BRIDGE = `ws://127.0.0.1:17371/bridge?panel=${PANEL}`;
 // The agent stays inside the web: local files via file:// are refused everywhere.
 const noFile = (url) => { if (/^\s*file:/i.test(url || '')) throw new Error('file:// URLs are blocked (Chrome web tasks only)'); };
 
@@ -61,8 +63,11 @@ const KEYS = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 3
 async function withDebugger(tabId, fn) {
   noFile((await chrome.tabs.get(tabId)).url);
   const target = { tabId };
+  const send = (method, params) => chrome.debugger.sendCommand(target, method, params);
+  // Playwright may already hold this tab; reuse its attachment instead of fighting over it.
+  if (cdp.attachedTabs.has(tabId)) return fn(send);
   await chrome.debugger.attach(target, '1.3');
-  try { return await fn((method, params) => chrome.debugger.sendCommand(target, method, params)); }
+  try { return await fn(send); }
   finally { await chrome.debugger.detach(target).catch(() => {}); }
 }
 
@@ -136,7 +141,11 @@ async function waitLoaded(tabId, ms = 15000) {
 function connectBridge() {
   const ws = new WebSocket(BRIDGE);
   ws.onmessage = async (e) => {
-    const { id, tool, args } = JSON.parse(e.data);
+    const msg = JSON.parse(e.data);
+    if (msg.cdpOpen) return cdp.open((m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ cdp: m })));
+    if (msg.cdpClose) return cdp.close();
+    if (msg.cdp) return cdp.message(msg.cdp);
+    const { id, tool, args } = msg;
     let out;
     try {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
@@ -147,6 +156,6 @@ function connectBridge() {
     }
     ws.send(JSON.stringify(out));
   };
-  ws.onclose = () => setTimeout(connectBridge, 2000);
+  ws.onclose = () => { cdp.close(); setTimeout(connectBridge, 2000); };
 }
 connectBridge();
