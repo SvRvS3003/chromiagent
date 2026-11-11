@@ -91,7 +91,11 @@ let installedAgents = ['shell'];
   }
 })();
 
-const SHELL = WIN ? [process.env.COMSPEC || 'cmd.exe', []] : [process.env.SHELL || '/bin/bash', ['-il']];
+// The agent command is handed to the user's shell as its startup command, not typed into the terminal:
+// typed text races the shell's startup and some setups drop it. Profiles still load, so aliases and
+// functions work, and when the agent exits the panel keeps a normal shell.
+const USER_SHELL = WIN ? process.env.COMSPEC || 'cmd.exe' : process.env.SHELL || '/bin/bash';
+const shellArgs = (cmd) => (WIN ? (cmd ? ['/k', cmd] : []) : cmd ? ['-ilc', `${cmd}; exec ${q(USER_SHELL)} -il`] : ['-il']);
 
 const wss = new WebSocketServer({
   host: '127.0.0.1',
@@ -177,7 +181,7 @@ const REPLAY_BYTES = 512 * 1024;
 function spawnSession(panel, msg) {
   // `agent: true` is what panels from 1.3 and earlier send.
   const agent = msg.agent === true ? 'claude' : (Object.hasOwn(AGENTS, msg.agent) ? msg.agent : 'shell');
-  const term = pty.spawn(SHELL[0], SHELL[1], {
+  const term = pty.spawn(USER_SHELL, shellArgs(AGENTS[agent]), {
     name: 'xterm-256color',
     cols: msg.cols || 80,
     rows: msg.rows || 24,
@@ -194,7 +198,6 @@ function spawnSession(panel, msg) {
     if (sessions.get(panel) === session) sessions.delete(panel);
     if (isOpen(session.ws)) session.ws.close();
   });
-  if (AGENTS[agent]) term.write(`${AGENTS[agent]}\r`);
   return session;
 }
 
