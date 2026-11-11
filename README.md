@@ -1,6 +1,8 @@
 <div align="center">
 
-# ✦ Chromiagent
+<img src="extension/icons/128.png" width="72" alt=""><br>
+
+# Chromiagent
 
 **A terminal in Chrome's side panel, running an AI agent that can see and drive every open tab.**
 
