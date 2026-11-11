@@ -144,7 +144,8 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 - **Chrome only.** In the panel, Claude Code's own shell and file tools are switched off and other MCP servers are not loaded. `file://` pages cannot be opened or read.
 - **Sandboxed code mode.** Agent scripts and Playwright run under Node's permission model (`--permission`), the same on every operating system. They cannot read or write your files or start programs: even code that escapes Playwright's VM and reaches Node's `fs` or `child_process` gets `ERR_ACCESS_DENIED`.
 - **Local only.** The host listens on `127.0.0.1`, and it accepts the terminal and bridge only from this extension's ID. Websites cannot connect to it.
-- **It acts as you.** The agent uses your logged-in Chrome sessions. Watch what it does and use `Ctrl+C` to stop it. Code mode, `run_js` and `press_key` show Chrome's "is debugging this browser" bar while they are attached.
+- **You see when it acts.** While the agent works on a tab, a neon light runs along the edges of that page; it fades out a moment after the agent stops. Chrome also shows its own "is debugging this browser" bar while code mode, `run_js` or `press_key` are attached (only the browser can hide that bar).
+- **It acts as you.** The agent uses your logged-in browser sessions. Watch what it does and use `Ctrl+C` to stop it.
 
 ## Update / uninstall
 

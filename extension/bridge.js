@@ -160,7 +160,9 @@ async function connectBridge() {
     let out;
     try {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
+      glow(args?.tabId);
       const r = await tools[tool](args);
+      if (tool === 'open_tab') glow(r.tabId);
       out = r && r.image ? { id, image: r.image } : r && r.error ? { id, error: r.error } : { id, result: r };
     } catch (err) {
       out = { id, error: String(err.message || err) };

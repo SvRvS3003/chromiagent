@@ -80,6 +80,8 @@ const cdp = (() => {
         const tabId = tabOf(sessionId);
         if (tabId === undefined) throw new Error(`No session ${sessionId}`);
         if (method === 'Page.navigate' && !usable(params.url)) throw new Error('file:// and browser-internal URLs are blocked');
+        // Real actions light the tab up; Playwright's setup chatter on every tab does not.
+        if (/^(Input\.|Page\.(navigate|reload)|Runtime\.(evaluate|callFunctionOn)$|DOM\.(focus|setFileInputFiles))/.test(method)) glow(tabId);
         const target = sessionId.startsWith('tab-') ? { tabId } : { tabId, sessionId };
         result = await chrome.debugger.sendCommand(target, method, params);
       }
