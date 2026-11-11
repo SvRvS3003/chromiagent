@@ -1,0 +1,24 @@
+{
+  "name": "chromiagent",
+  "version": "1.1.0",
+  "description": "A terminal side panel for Chrome that runs an AI agent with control over every open tab.",
+  "author": "SvRvS",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SvRvS3003/chromiagent.git"
+  },
+  "scripts": {
+    "host": "node host/server.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.2"
+  },
+  "devDependencies": {
+    "@xterm/xterm": "^6.0.0",
+    "@xterm/addon-fit": "^0.11.0"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Chromiagent",
+  "version": "1.1.0",
+  "description": "Gemini-style side panel with a real terminal for running a Chrome agent.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkROgmPIpGcBDga6D1hRzWCwFAQfKSSEirZVFmD+MImaMTyoh7Ig7tCxhDVZC7T1waiBe+z732uOBFxtstBBiKVacSVrax2cXGZ5iLuY+awSF7I7r/6v0DhBmeBXBdlvsqeNL0XgMm9dgc5ln5Axj/RBkSkHUc1H9OlKm1+Bb20qXNI+vQC/9i4L8dU7JySKIJtlXfdBdu3KuiMY1pmUMMPFlPWDCvDUi83LEaeNNOz9P/Xkxs+Q08JL4ajn18pcvxGu+dBvIN33ZWL4daKSKm/ediimHDWjC6T+qZj0WARC4WX0MCpkTPGSfDj5gkDXQoPq0N+oV68qYOVrevY1gXwIDAQAB",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "scripting",
+    "debugger"
+  ],
+  "action": {
+    "default_title": "Ask Agent",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "Open Chromiagent"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:17371"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

@@ -1,0 +1,43 @@
+:root {
+  --bg: #131314;
+  --glow: #1a2a4f;
+  --text: #e3e3e3;
+  --muted: #a8a8ad;
+  --chip: #282a2c;
+  --chip-hover: #333537;
+  --card: #1e1f20;
+  --line: #3c4043;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column;
+  background: radial-gradient(120% 55% at 50% 100%, var(--glow) 0%, var(--bg) 70%);
+  color: var(--text);
+  font: 14px/1.4 "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+[hidden] { display: none !important; }
+
+header { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; }
+.spacer { flex: 1; }
+.icon {
+  display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer;
+}
+.icon:hover { background: var(--chip-hover); color: var(--text); }
+.icon:focus-visible, .chip:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 1px; }
+.icon svg { width: 20px; height: 20px; fill: currentColor; }
+.icon.small { width: 22px; height: 22px; }
+.icon.small svg { width: 16px; height: 16px; }
+
+main { flex: 1; min-height: 0; }
+header .sparkle {
+  width: 18px; height: 18px; margin-left: 4px;
+  background: conic-gradient(from 225deg, #4285f4, #9b72cb, #d96570, #fbbc04, #34a853, #4285f4);
+  -webkit-mask: url(sparkle.svg) center / contain no-repeat; mask: url(sparkle.svg) center / contain no-repeat;
+}
+.name { font-size: 14px; color: var(--text); }
+#termview { padding: 6px 4px 8px 10px; }
+#term { height: 100%; }
+.xterm .xterm-viewport { background: transparent !important; }
