@@ -206,12 +206,72 @@ const tools = {
   async screenshot({ tabId }) {
     const t = await chrome.tabs.update(tabId, { active: true });
     noFile(t.url);
-    await chrome.windows.update(t.windowId, { focused: true });
     await new Promise((r) => setTimeout(r, 400));
     const url = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'jpeg', quality: 60 });
     return { image: url.split(',')[1] };
   },
+  // Watches a tab like a short video: frames over time, merged into one timeline image.
+  // untilChange / untilText return the moment it happens, so the agent can react in a see-act loop.
+  async watch({ tabId, seconds = 6, untilChange = false, untilText }) {
+    const t = await chrome.tabs.update(tabId, { active: true });
+    noFile(t.url);
+    await sleep(300);
+    const sees = async () => (await chrome.scripting.executeScript({ target: { tabId }, func: (s) => !!document.body?.innerText.includes(s), args: [untilText] }))[0].result;
+    let found = false;
+    const t0 = Date.now(), end = t0 + Math.min(Math.max(seconds, 1), 30) * 1000;
+    const frames = [];
+    let last = null, captured = 0;
+    while (Date.now() < end) {
+      const shot = Date.now();
+      const url = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'jpeg', quality: 55 });
+      captured++;
+      // Same pixels encode to the same bytes: only frames where something moved are kept.
+      if (url !== last) frames.push({ url, at: (Date.now() - t0) / 1000 });
+      last = url;
+      if (untilChange && frames.length > 1) break;
+      if (untilText && (found = await sees().catch(() => false))) break;
+      await sleep(Math.max(0, 510 - (Date.now() - shot))); // Chrome allows two captures per second
+    }
+    const image = await timeline(frames.length > WATCH_MAX ? pickEvenly(frames, WATCH_MAX) : frames);
+    const changes = frames.slice(1).map((f) => `+${f.at.toFixed(1)}s`).join(', ');
+    const text = untilText && !found ? `"${untilText}" did not appear in ${seconds}s (${captured} frames).`
+      : untilChange && frames.length < 2 ? `Nothing changed in ${seconds}s (${captured} frames).`
+      : (found ? `"${untilText}" appeared. ` : '') + `${captured} frames over ${((Date.now() - t0) / 1000).toFixed(1)}s; the picture changed ${frames.length - 1} time${frames.length === 2 ? '' : 's'}${changes ? ` (at ${changes})` : ''}. The image shows the distinct frames in order, left to right, top to bottom.`;
+    return { image, text };
+  },
 };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const WATCH_MAX = 12;
+const pickEvenly = (a, n) => Array.from({ length: n }, (_, i) => a[Math.round((i * (a.length - 1)) / (n - 1))]);
+
+// Lays frames out in a grid, each stamped with its time, and returns base64 JPEG.
+async function timeline(frames) {
+  // Decoded by hand: the panel's CSP does not let fetch() read data: URLs.
+  const blob = (url) => new Blob([Uint8Array.from(atob(url.slice(url.indexOf(',') + 1)), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
+  const bitmaps = await Promise.all(frames.map((f) => createImageBitmap(blob(f.url))));
+  const cols = Math.min(3, bitmaps.length), rows = Math.ceil(bitmaps.length / cols);
+  const w = bitmaps.length === 1 ? Math.min(bitmaps[0].width, 1280) : 480;
+  const h = Math.round((w * bitmaps[0].height) / bitmaps[0].width), gap = 6;
+  const canvas = new OffscreenCanvas(cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap);
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#131314';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.font = 'bold 15px sans-serif';
+  bitmaps.forEach((b, i) => {
+    const x = (i % cols) * (w + gap), y = Math.floor(i / cols) * (h + gap);
+    g.drawImage(b, x, y, w, h);
+    const label = `${i + 1} · +${frames[i].at.toFixed(1)}s`;
+    g.fillStyle = 'rgba(0,0,0,.75)';
+    g.fillRect(x + 6, y + 6, g.measureText(label).width + 14, 24);
+    g.fillStyle = '#39ff14';
+    g.fillText(label, x + 13, y + 23);
+  });
+  const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 })).arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
 
 async function waitLoaded(tabId, ms = 15000) {
   const end = Date.now() + ms;
@@ -235,7 +295,7 @@ async function connectBridge() {
       glow(args?.tabId);
       const r = await tools[tool](args);
       if (tool === 'open_tab') glow(r.tabId);
-      out = r && r.image ? { id, image: r.image } : r && r.error ? { id, error: r.error } : { id, result: r };
+      out = r && r.image ? { id, image: r.image, result: r.text } : r && r.error ? { id, error: r.error } : { id, result: r };
     } catch (err) {
       out = { id, error: String(err.message || err) };
     }

@@ -90,6 +90,12 @@ Values typed into form fields are never sent. The element picker is adapted from
 
 The agent has its own pointer, separate from your mouse, in the logo's animated neon green and white. It glides to whatever the agent is about to click or type into, in quick mode and in Playwright code mode alike, so you can follow every step.
 
+While the agent works on a page, only its pointer acts there: your mouse clicks on that page are held back and your cursor shows a "not allowed" sign, so the two never get mixed up. Press `Esc` to take your mouse back at once; it also comes back by itself a moment after the agent stops. Other tabs and windows are yours as usual.
+
+### It watches, like a video
+
+`watch` records a tab at two frames a second and gives the agent the frames where something changed, laid out as one timeline. It can also return the moment the page changes (`untilChange`) or a text appears (`untilText`), so the agent works in a loop: watch, decide, act, watch again. For reactions faster than that, it writes the loop in code mode with Playwright's `waitForSelector` and `waitForFunction`.
+
 When the agent needs you, it does not ask in the terminal. A card pops out next to its pointer with the question, ready answers you can click (or press `1`–`9`), and a box for your own reply (`Enter` sends, `Esc` cancels). On pages where nothing can be shown, such as `chrome://` pages, the same card opens in the panel.
 
 <p><img src="docs/ask.png" width="400" alt="A question card next to the agent's pointer"></p>
@@ -156,6 +162,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 | `press_key` | Real key presses: Enter, Escape, Tab, arrow keys… |
 | `run_js` | Run JavaScript in the page and return the result |
 | `screenshot` | An image of any tab |
+| `watch` | Watches a tab like a short video: a timeline of the frames that changed; can stop the moment the page changes or a text appears |
 | `ask_user` | A question card next to the agent's pointer: ready answers and a reply box, or a field for you to fill yourself |
 
 
@@ -203,6 +210,10 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Element belgilash:** paneldagi belgilash tugmasini bosing, sahifadagi elementni tanlang, izoh yozing va `Ctrl+Enter` bosing. Izoh element ma'lumotlari bilan birga agentga yuboriladi.
 
 **Agent kursori:** agentning o'z kursori bor, u logotip rangida (neon yashil va oq) jilolanadi va agent bosmoqchi yoki yozmoqchi bo'lgan joyga suzib boradi. Agentga sizdan biror narsa kerak bo'lsa, terminalda emas, kursor yonida savol oynasi chiqadi: tayyor javob variantlari va yozish maydoni bilan.
+
+**Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
+
+**Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 
 **Akkauntlar:** agent kirish, ro'yxatdan o'tish va parolni tiklash sahifalarini topib, email yoki loginni to'ldiradi. Parol va tasdiqlash kodlarini esa sahifadagi maydonga o'zingiz yozasiz, agent ularni ko'rmaydi.
 

@@ -35,6 +35,7 @@
       padding:2px 8px 2px 5px; border-radius:999px; font-size:11px; font-weight:600; color:#eaffe4;
       background: linear-gradient(#101410,#101410) padding-box, ${LOGO} border-box; border:1px solid transparent;
       box-shadow: 0 2px 10px rgba(0,0,0,.45); }
+    .hint-pill { position:fixed; animation: rise .25s ease-out; }
     .logo { width:12px; height:12px; flex:none; background:${LOGO}; -webkit-mask:${svgMask(SPARKLE)}; mask:${svgMask(SPARKLE)}; }
 
     .ripple { position:fixed; width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:50%;
@@ -118,6 +119,7 @@
   // Glide to (x, y); resolves when the pointer has arrived, so the action happens under it.
   function move(x, y, label, from) {
     mount();
+    guard(true);
     tag.textContent = label || 'Chromiagent';
     const start = pos || from || { x: innerWidth * 0.62, y: innerHeight * 0.72 };
     if (!cursor.classList.contains('on')) {
@@ -148,7 +150,50 @@
   function idle() {
     if (card || !cursor) return;
     cursor.classList.remove('on');
+    guard(false);
+    tookOver = false;
   }
+
+  // ---- while the agent works on this page, only its pointer acts here ----
+  // The user's real mouse is held back (their cursor shows "not allowed"), so the two never mix.
+  // Esc gives the mouse back. The agent's own input is let through by pass() around each event.
+  const HELD = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu',
+    'pointermove', 'mousemove', 'pointerover', 'pointerout', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave'];
+  let guarding = false, letThrough = false, tookOver = false, hint = null, hintTimer = 0;
+  const busyStyle = document.createElement('style');
+  busyStyle.textContent = 'html[data-chromiagent-busy], html[data-chromiagent-busy] * { cursor: not-allowed !important; }';
+
+  function guard(on) {
+    guarding = on && !tookOver && !card;
+    if (guarding) { document.documentElement.setAttribute('data-chromiagent-busy', ''); if (!busyStyle.isConnected) document.documentElement.appendChild(busyStyle); }
+    else { document.documentElement.removeAttribute('data-chromiagent-busy'); hideHint(); }
+  }
+  function hold(e) {
+    if (!guarding || letThrough || !e.isTrusted || (host && e.composedPath().includes(host))) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.type === 'pointerdown') showHint(e.clientX, e.clientY);
+  }
+  for (const t of HELD) addEventListener(t, hold, true);
+  addEventListener('keydown', (e) => {
+    if (hint && e.key === 'Escape' && e.isTrusted) { e.preventDefault(); e.stopImmediatePropagation(); tookOver = true; guard(false); }
+  }, true);
+
+  function showHint(x, y) {
+    mount();
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.className = 'tag hint-pill';
+      hint.innerHTML = '<i class="logo"></i><span>Chromiagent is working here · Esc to use your mouse</span>';
+      layer.appendChild(hint);
+    }
+    hint.style.left = `${Math.min(x + 14, innerWidth - 330)}px`;
+    hint.style.top = `${Math.min(y + 46, innerHeight - 30)}px`;
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(hideHint, 2600);
+  }
+  function hideHint() { clearTimeout(hintTimer); hint?.remove(); hint = null; }
+  const pass = (on) => { letThrough = on; };
 
   const findField = (ref, selector) => (selector ? document.querySelector(selector)
     : ref != null ? document.querySelector(`[data-ca="${ref}"]`) : null);
@@ -185,6 +230,7 @@
   // Resolves with { type: 'text' | 'option' | 'done' | 'cancel' | 'timeout', value? }.
   function ask({ question, options = [], placeholder, ref, selector } = {}) {
     mount();
+    guard(false); // the user needs the page while answering
     if (card) card.finish({ type: 'cancel' });
     const field = findField(ref, selector);
     if ((ref != null || selector) && !field) return Promise.resolve({ type: 'error', value: 'field not found; call read_page again' });
@@ -283,5 +329,5 @@
     return done;
   }
 
-  globalThis.__chromiagentUI = { move, press, idle, ask };
+  globalThis.__chromiagentUI = { move, press, idle, ask, pass };
 })();

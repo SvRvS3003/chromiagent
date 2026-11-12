@@ -5,6 +5,8 @@ You have two ways to work on the same Chrome. Choose yourself from what the task
 ## 1. Quick mode: the `chrome` MCP tools
 Fast, and no "debugging" bar. Use it for one simple step:
 - `list_tabs` for an overview of every tab in every window. "This tab" / "this page" = the `active: true` tab in the focused window.
+- `watch` when you need to see change over time, like a video: a playing video, animations, a page that is loading or updating live, a chart ticking, or what happened after a click (`untilChange: true` waits for the reaction). It returns a timeline of frames.
+- To react in real time, loop: `watch` with `untilChange` or `untilText` (it returns the moment that happens), decide, act, `watch` again. For reactions faster than you can think (milliseconds), write the loop in code mode instead: `page.waitForSelector`, `page.waitForFunction`, `page.on(...)`.
 - one action: open / close / switch a tab, navigate, `read_page`, one `click` / `type`, `scroll`, `screenshot`, a small `run_js`.
 - Prefer it: Chrome's "is debugging this browser" bar shows only while code mode, `press_key` or `run_js` runs.
 

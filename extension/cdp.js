@@ -92,7 +92,10 @@ const cdp = (() => {
             // Playwright's mouse drives the agent's own pointer: it glides there, then the real event fires.
             if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved') await pointTo(tabId, params.x, params.y, params.buttons ? 'drag' : 'Chromiagent');
             if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') { await pointTo(tabId, params.x, params.y, 'click'); pressAt(tabId); }
-            return send();
+            if (method !== 'Input.dispatchMouseEvent') return send();
+            // The page holds back the user's mouse while the agent works; this event is the agent's.
+            await ui(tabId, 'pass', true).catch(() => {});
+            try { return await send(); } finally { await ui(tabId, 'pass', false).catch(() => {}); }
           });
           inputQueue.set(tabId, run.catch(() => {}));
           result = await run;

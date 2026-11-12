@@ -21,6 +21,8 @@ const TOOLS = [
   ['scroll', 'Scroll a tab by pixels (positive = down).', { ...TAB, dy: { type: 'number' } }, ['tabId', 'dy']],
   ['run_js', 'Evaluate JavaScript in the page (bypasses page CSP). Returns the value; promises are awaited.', { ...TAB, code: { type: 'string' } }, ['tabId', 'code']],
   ['screenshot', 'Screenshot of a tab (activates it first).', TAB, ['tabId']],
+  ['watch', 'Watch a tab like a short video: captures it about twice a second for `seconds` (1-30, default 6) and returns the frames where something changed as one timeline image, with times. Use it for video, animation, loading, live feeds, or to see what a click set off. untilChange: return the moment the page changes; untilText: return the moment that text appears. Loop watch -> decide -> act -> watch to react in real time.',
+    { ...TAB, seconds: { type: 'number' }, untilChange: { type: 'boolean' }, untilText: { type: 'string' } }, ['tabId']],
   ['ask_user', 'Ask the user something without leaving the page: a card pops up next to your pointer with a reply box and, if given, ready answers to click. Waits up to 10 minutes and returns their answer. With ref/selector the card points at that field and the user types into it on the page (passwords, verification codes, card details); you get "done", never the value.',
     { tabId: { type: 'number', description: 'Tab to ask on; default: the active tab' },
       question: { type: 'string' },
@@ -52,7 +54,7 @@ function connect() {
 async function callBridge(tool, args) {
   const s = await connect();
   const id = ++seq;
-  const ms = tool === 'ask_user' ? 11 * 60000 : 60000; // the user gets 10 minutes to answer
+  const ms = tool === 'ask_user' ? 11 * 60000 : tool === 'watch' ? 90000 : 60000; // the user gets 10 minutes to answer
   return new Promise((resolve) => {
     const timer = setTimeout(() => { waiting.delete(id); resolve({ error: `${tool} timed out after ${ms / 1000}s` }); }, ms);
     waiting.set(id, (m) => { clearTimeout(timer); resolve(m); });
@@ -72,7 +74,7 @@ async function handle(msg) {
     let res;
     try { res = await callBridge(params.name, params.arguments || {}); } catch (e) { res = { error: `Chromiagent host unreachable: ${e.message}` }; }
     if (res.error) return reply(id, { isError: true, content: [{ type: 'text', text: res.error }] });
-    if (res.image) return reply(id, { content: [{ type: 'image', data: res.image, mimeType: 'image/jpeg' }] });
+    if (res.image) return reply(id, { content: [{ type: 'image', data: res.image, mimeType: 'image/jpeg' }, ...(res.result ? [{ type: 'text', text: res.result }] : [])] });
     return reply(id, { content: [{ type: 'text', text: typeof res.result === 'string' ? res.result : JSON.stringify(res.result, null, 1) }] });
   }
   if (id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown method ${method}` } }) + '\n');
