@@ -51,8 +51,8 @@ function writeWorkspace() {
   });
   // Qwen Code and Gemini CLI share the settings format.
   const geminiStyle = {
-    // ask_user waits up to 10 minutes for the user.
-    mcpServers: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { ...v, timeout: 900000 }])),
+    // ask_user waits up to 10 minutes; observe() scripts run up to 30.
+    mcpServers: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { ...v, timeout: 1900000 }])),
     context: { fileName: ['AGENTS.md'] },
     tools: { exclude: ['run_shell_command', 'write_file', 'replace', 'edit', 'read_file', 'read_many_files', 'glob', 'search_file_content', 'grep_search', 'list_directory'] },
   };
@@ -63,11 +63,11 @@ writeWorkspace();
 
 // Typed into the user's own shell, so their aliases and functions (e.g. a `claude` wrapper) still apply.
 const q = (s) => (WIN ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`);
-const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`, `mcp_servers.${name}.tool_timeout_sec=900`];
+const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`, `mcp_servers.${name}.tool_timeout_sec=1900`];
 const AGENTS = {
   // Browser-only: Claude Code's built-in shell/file tools are off and no other MCP servers load.
   // Windows runs cmd.exe, which passes "" through to claude (Windows PowerShell 5 would drop it).
-  claude: `claude --tools ${WIN ? '""' : "''"} --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`,
+  claude: `claude --tools ${WIN ? '""' : "''"} --no-chrome --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`,
   opencode: 'opencode',
   // Codex reads AGENTS.md from the folder; its own shell stays read-only.
   codex: `codex --sandbox read-only ${Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)).map((a) => `-c ${q(a)}`).join(' ')}`,

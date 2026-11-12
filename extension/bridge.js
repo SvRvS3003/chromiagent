@@ -180,7 +180,7 @@ const tools = {
     return `pressed ${key}`;
   }),
   run_js: ({ tabId, code }) => withDebugger(tabId, async (send) => {
-    const r = await send('Runtime.evaluate', { expression: code, awaitPromise: true, returnByValue: true, userGesture: true });
+    const r = await send('Runtime.evaluate', { expression: code, awaitPromise: true, returnByValue: true, userGesture: true, replMode: true }); // replMode: top-level await, like the console
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value === undefined ? '(undefined)' : r.result.value;
   }),
@@ -212,6 +212,43 @@ const tools = {
   async screenshot({ tabId }) {
     const frames = await frameSource(tabId);
     try { return { image: (await frames.grab()).split(',')[1] }; } finally { await frames.done(); }
+  },
+  // A continuous stream of everything that happens on a tab (see recorder.js).
+  async monitor({ tabId, action = 'start' }) {
+    if (action === 'stop') { monitors.delete(tabId); return 'stopped'; }
+    const tab = await chrome.tabs.get(tabId);
+    noFile(tab.url);
+    if (!monitors.has(tabId)) monitors.set(tabId, { started: Date.now(), since: 0, rid: null, queue: [] });
+    await injectRecorder(tabId);
+    return `monitoring tab ${tabId}: ${tab.title} (${tab.url}). Call events to receive what happens.`;
+  },
+  // Returns as soon as something happens (or after waitMs with an empty list).
+  async events({ tabId, waitMs = 15000, max = 150 }) {
+    if (!monitors.has(tabId)) await tools.monitor({ tabId });
+    const m = monitors.get(tabId);
+    const end = Date.now() + Math.min(Math.max(waitMs, 0), 110000);
+    for (;;) {
+      let page = null;
+      try {
+        [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', args: [m.since, m.rid],
+          func: (since, rid) => { const r = window.__chromiagentRec; return r ? r.take(r.id === rid ? since : 0) : null; } });
+      } catch {} // between two pages, or a page we may not enter
+      if (page === null) await injectRecorder(tabId).catch(() => {});
+      const out = m.queue.splice(0);
+      if (page) {
+        m.rid = page.id;
+        if (page.events.length) m.since = page.events[page.events.length - 1].seq;
+        out.push(...page.events);
+        if (page.dropped) out.push({ t: Date.now(), type: 'dropped', count: page.dropped });
+      }
+      if (out.length || Date.now() >= end) {
+        out.sort((a, b) => a.t - b.t);
+        const shown = out.slice(-max).map(({ seq, t, ...e }) => ({ at: +((t - m.started) / 1000).toFixed(2), ...e }));
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        return { tabId, url: tab?.url, title: tab?.title, skipped: out.length - shown.length, events: shown };
+      }
+      await sleep(300);
+    }
   },
   // Watches a tab like a short video: frames over time, merged into one timeline image.
   // untilChange / untilText return the moment it happens, so the agent can react in a see-act loop.
@@ -290,6 +327,25 @@ async function withBadge(promise) {
   try { return await promise; } finally { chrome.action.setBadgeText({ text: '' }); }
 }
 
+// ---- monitoring state; the recorder is put back after every navigation ----
+const monitors = new Map(); // tabId -> { started, since, rid, queue }
+const injectRecorder = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['recorder.js'], world: 'MAIN', injectImmediately: true });
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  const m = monitors.get(tabId);
+  if (!m) return;
+  if (change.url) m.queue.push({ t: Date.now(), type: 'tab', change: 'url', url: change.url });
+  if (change.status) m.queue.push({ t: Date.now(), type: 'tab', change: change.status });
+  if (change.audible !== undefined) m.queue.push({ t: Date.now(), type: 'tab', change: change.audible ? 'sound on' : 'sound off' });
+  if (change.status === 'complete') injectRecorder(tabId).catch(() => {});
+});
+chrome.tabs.onCreated.addListener((tab) => {
+  monitors.get(tab.openerTabId)?.queue.push({ t: Date.now(), type: 'tab', change: 'opened a new tab', tabId: tab.id, url: tab.pendingUrl || tab.url });
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const m = monitors.get(tabId);
+  if (m) m.queue.push({ t: Date.now(), type: 'tab', change: 'closed' });
+});
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const WATCH_MAX = 12;
 const pickEvenly = (a, n) => Array.from({ length: n }, (_, i) => a[Math.round((i * (a.length - 1)) / (n - 1))]);
@@ -341,7 +397,7 @@ async function connectBridge() {
     let out;
     try {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
-      if (tool !== 'watch' && tool !== 'screenshot') glow(args?.tabId); // looking is not acting
+      if (!['watch', 'screenshot', 'monitor', 'events'].includes(tool)) glow(args?.tabId); // looking is not acting
       const r = await tools[tool](args);
       if (tool === 'open_tab') glow(r.tabId);
       out = r && r.image ? { id, image: r.image, result: r.text } : r && r.error ? { id, error: r.error } : { id, result: r };

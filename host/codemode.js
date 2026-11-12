@@ -107,23 +107,33 @@ const asText = (r) => {
   if (r.isError) throw new Error(text);
   return text;
 };
+// observe() and untilEvent() (host/observe.ts) are available inside every script.
+const LIBRARY = fs.readFileSync(path.join(__dirname, 'observe.ts'), 'utf8');
+
 // The script runs in a fresh, permission-restricted process; its tool calls come back here over IPC.
-function runTypeScript(code) {
-  const js = stripTypeScriptTypes(`async function __main(chrome, playwright, console) {\n${code}\n}`, { mode: 'strip' });
+function runTypeScript(code, timeoutSec = 300) {
+  const limit = Math.min(Math.max(timeoutSec, 10), 1800);
+  const js = stripTypeScriptTypes(`async function __main(chrome, playwright, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
   const child = fork(path.join(__dirname, 'runner.js'), [], {
     execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
   playwrightBusy();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Script timed out after 5 minutes')); }, 300000);
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`Script timed out after ${limit}s (raise timeoutSec, up to 1800)`)); }, limit * 1000);
     child.on('message', async (msg) => {
       if (msg.type === 'call') {
         try {
           if (!servers[msg.ns]) throw new Error(`Unknown API ${msg.ns}`);
           child.send({ type: 'reply', id: msg.id, text: asText(await servers[msg.ns].call(msg.name, msg.args)) });
         } catch (e) {
-          child.send({ type: 'reply', id: msg.id, error: String(e.message || e) });
+          let error = String(e.message || e);
+          // The browser connection dropped (panel reloaded, host restarted): start Playwright fresh for the next script.
+          if (msg.ns === 'playwright' && /has been closed|Target closed|Browser closed|Playwright stopped|not connected/i.test(error)) {
+            servers.playwright.proc.kill();
+            error += '\n(Chromiagent reconnects Playwright: run the script again.)';
+          }
+          child.send({ type: 'reply', id: msg.id, error });
         }
         return;
       }
@@ -149,16 +159,16 @@ async function handle({ id, method, params }) {
     await ready;
     return reply(id, { tools: [{
       name: 'run_typescript',
-      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright is reconnected after 15 s without scripts, so select the tab again at the start of each script. Available APIs:\n\n' + declarations,
-      inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'TypeScript function body' } }, required: ['code'] },
+      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright is reconnected after 15 s without scripts, so select the tab again at the start of each script. Scripts stop after timeoutSec (default 300, max 1800).\n\nContinuous watching: `observe(tabId, handler, { seconds })` calls your handler with every new batch of page events the moment they happen (DOM changes, network, WebSocket, console, errors, navigation, user actions, media) until time runs out or the handler returns true; the handler can analyse and act in between. `untilEvent(tabId, match)` waits for one event. Their source:\n\n' + LIBRARY + '\n\nAvailable APIs:\n\n' + declarations,
+      inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'TypeScript function body' }, timeoutSec: { type: 'number', description: 'Longest run in seconds (default 300, max 1800); raise it for long observe() loops' } }, required: ['code'] },
     }] });
   }
   if (method === 'tools/call') {
     try {
       await ready;
-      return reply(id, { content: [{ type: 'text', text: await runTypeScript(params.arguments.code) }] });
+      return reply(id, { content: [{ type: 'text', text: await runTypeScript(params.arguments.code, params.arguments.timeoutSec) }] });
     } catch (e) {
-      return reply(id, { isError: true, content: [{ type: 'text', text: String(e.stack || e.message || e) }] });
+      return reply(id, { isError: true, content: [{ type: 'text', text: String(e.message || e).replace(/^(Error: )+/, '') }] });
     }
   }
   if (id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown method ${method}` } }) + '\n');

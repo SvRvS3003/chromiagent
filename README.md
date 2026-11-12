@@ -96,6 +96,21 @@ While the agent works on a page, only its pointer acts there: your mouse clicks 
 
 The agent never pulls you to its tab. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts, screenshots and `watch` all work on tabs you are not looking at. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
 
+### It follows everything that happens on a site
+
+`monitor` puts a recorder into the page that keeps a running log of what happens there: DOM changes, `fetch` / XHR / WebSocket traffic with status and timing, console output and errors, URL and title changes, your clicks and inputs (password values are never recorded), dialogs and media. `events` returns the moment something new happens.
+
+In code mode the agent watches non-stop with `observe()`, a small TypeScript library (`host/observe.ts`) built into every script. Its handler gets each batch of events as it arrives and can analyse and act right away, for up to 30 minutes:
+
+```ts
+const r = await observe(tabId, async (events) => {
+  for (const e of events) {
+    if ((e.type === 'fetch' || e.type === 'xhr') && Number(e.status) >= 400) report.push(`${e.url} -> ${e.status}`);
+    if (e.type === 'dom' && JSON.stringify(e.added).includes('Sold out')) return true; // stop here
+  }
+}, { seconds: 600 });
+```
+
 ### It watches, like a video
 
 `watch` records a tab at two frames a second and gives the agent the frames where something changed, laid out as one timeline. It can also return the moment the page changes (`untilChange`) or a text appears (`untilText`), so the agent works in a loop: watch, decide, act, watch again. For reactions faster than that, it writes the loop in code mode with Playwright's `waitForSelector` and `waitForFunction`.
@@ -167,6 +182,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 | `run_js` | Run JavaScript in the page and return the result |
 | `screenshot` | An image of any tab |
 | `watch` | Watches a tab like a short video: a timeline of the frames that changed; can stop the moment the page changes or a text appears |
+| `monitor` · `events` | A running log of everything on a tab (DOM, network, WebSocket, console, errors, navigation, user actions, media); `events` returns the moment something happens |
 | `ask_user` | A question card next to the agent's pointer: ready answers and a reply box, or a field for you to fill yourself |
 
 
@@ -218,6 +234,8 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
 
 **Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar fonda, yashil "Chromiagent" guruhida ochiladi, shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
+
+**Saytni uzluksiz kuzatish:** `monitor` sahifaga yozib boruvchi skript qo'yadi, u sahifadagi hamma narsani qayd etadi: DOM o'zgarishlari, tarmoq so'rovlari, WebSocket, konsol xatolari, sahifa manzili, sizning harakatlaringiz. Code mode'da agent `observe()` bilan 30 daqiqagacha to'xtovsiz kuzatadi, voqealarni kelishi bilan tahlil qiladi va darhol harakat qiladi.
 
 **Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 

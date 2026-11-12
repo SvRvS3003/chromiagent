@@ -27,6 +27,8 @@ process.on('message', async (msg) => {
     const result = await main(api('chrome'), api('playwright'), { log, info: log, warn: log, error: log });
     process.send({ type: 'done', logs, result: result === undefined ? null : result });
   } catch (e) {
-    process.send({ type: 'done', logs, error: String(e && (e.stack || e.message) || e) });
+    // Only the script's own frames are useful to the agent; runner and Node internals are noise.
+    const text = String(e && (e.stack || e.message) || e).split('\n').filter((l) => !/runner\.js|codemode\.js|node:internal|node:events|process\.emit|at emit /.test(l)).join('\n');
+    process.send({ type: 'done', logs, error: text });
   }
 });

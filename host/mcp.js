@@ -23,6 +23,10 @@ const TOOLS = [
   ['screenshot', 'Screenshot of a tab (activates it first).', TAB, ['tabId']],
   ['watch', 'Watch a tab like a short video: captures it about twice a second for `seconds` (1-30, default 6) and returns the frames where something changed as one timeline image, with times. Use it for video, animation, loading, live feeds, or to see what a click set off. untilChange: return the moment the page changes; untilText: return the moment that text appears. Loop watch -> decide -> act -> watch to react in real time.',
     { ...TAB, seconds: { type: 'number' }, untilChange: { type: 'boolean' }, untilText: { type: 'string' } }, ['tabId']],
+  ['monitor', 'Start (or stop) continuously recording everything that happens on a tab: DOM changes, fetch/XHR/WebSocket traffic, console output and errors, URL/title changes, the user\'s clicks and inputs, dialogs, media. Then call events to receive it.',
+    { ...TAB, action: { type: 'string', enum: ['start', 'stop'] } }, ['tabId']],
+  ['events', 'New events from a monitored tab (starts monitoring if needed). Returns the moment something happens, or after waitMs (default 15000, max 110000) with none. Each event has `at` (seconds since monitoring began) and `type`: dom, fetch, xhr, ws, console, error, nav, title, user, scroll, dialog, media, tab.',
+    { ...TAB, waitMs: { type: 'number' }, max: { type: 'number', description: 'Most events to return, newest kept (default 150)' } }, ['tabId']],
   ['ask_user', 'Ask the user something without leaving the page: a card pops up next to your pointer with a reply box and, if given, ready answers to click. Waits up to 10 minutes and returns their answer. With ref/selector the card points at that field and the user types into it on the page (passwords, verification codes, card details); you get "done", never the value.',
     { tabId: { type: 'number', description: 'Tab to ask on; default: the active tab' },
       question: { type: 'string' },
@@ -54,7 +58,7 @@ function connect() {
 async function callBridge(tool, args) {
   const s = await connect();
   const id = ++seq;
-  const ms = tool === 'ask_user' ? 11 * 60000 : tool === 'watch' ? 90000 : 60000; // the user gets 10 minutes to answer
+  const ms = { ask_user: 11 * 60000, watch: 90000, events: 130000, run_js: 300000 }[tool] || 60000; // the user gets 10 minutes to answer
   return new Promise((resolve) => {
     const timer = setTimeout(() => { waiting.delete(id); resolve({ error: `${tool} timed out after ${ms / 1000}s` }); }, ms);
     waiting.set(id, (m) => { clearTimeout(timer); resolve(m); });
