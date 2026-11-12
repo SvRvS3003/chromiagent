@@ -1,6 +1,6 @@
 // Chromiagent chess helpers, by SvRvS: read the board from the page's HTML (no screenshots), ask the
 // engine, play the move, wait for the reply, all in one code mode script, so a game moves at engine speed.
-// Works on chess.com and lichess.org boards (play vs computer, analysis, puzzles).
+// Works on chess.com and lichess.org boards (play vs computer, live games against people, analysis, puzzles).
 
 interface ChessState {
   site: 'chess.com' | 'lichess' | 'unknown';
@@ -8,6 +8,7 @@ interface ChessState {
   turn: 'w' | 'b';
   flipped: boolean;         // board shown from black's side: usually you play black
   plies: number;            // half-moves played so far
+  live: boolean;            // true when the opponent is a person, not a bot
   over: boolean;            // a game-over dialog is showing
 }
 
@@ -43,8 +44,12 @@ const READ_BOARD = String.raw`() => {
       const kind = cls.find((c) => /^[wb][pnbrqk]$/.test(c)), sq = cls.find((c) => /^square-\d\d$/.test(c));
       if (kind && sq) put(Number(sq[7]), Number(sq[8]), kind[0], kind[1]);
     }
-    plies = document.querySelectorAll('.main-line-ply, .move-list .node .node-highlight-content, vertical-move-list .node').length
-      || document.querySelectorAll('[data-ply]').length;
+    // one .node-highlight-content per half-move on chess.com (live, bot and analysis); .node is per move
+    // pair where the newer list is used, so it counts double rather than clashing with the ply elements
+    const hl = document.querySelectorAll('.node-highlight-content').length
+      || document.querySelectorAll('.main-line-ply').length
+      || document.querySelectorAll('.move-list .node, vertical-move-list .node, wc-simple-move-list .node').length * 2;
+    plies = hl || document.querySelectorAll('[data-ply]').length;
   } else if (cg) {
     site = 'lichess'; board = cg; flipped = !!document.querySelector('.cg-wrap.orientation-black');
     const size = cg.getBoundingClientRect().width / 8;
@@ -65,7 +70,12 @@ const READ_BOARD = String.raw`() => {
   const rows = grid.map((r) => r.map((c) => c || '1').join('').replace(/1+/g, (s) => String(s.length)));
   const turn = plies % 2 === 0 ? 'w' : 'b';
   const over = !!document.querySelector('.game-over-modal-content, .game-over-modal-container, .board-modal-container-container, .result-wrap, .follow-up .rematch');
-  return { site, fen: rows.join('/') + ' ' + turn + ' ' + (castling || '-') + ' - 0 ' + (Math.floor(plies / 2) + 1), turn, flipped, plies, over };
+  const live = site === 'chess.com'
+    ? !/\/play\/(computer|analysis)|\/analysis|\/puzzles?/.test(location.pathname)
+    : site === 'lichess'
+      ? !/\bAI level\b|Stockfish level|\(AI\)/i.test(((document.querySelector('.game__meta') || {}).innerText || '') + ' ' + location.pathname)
+      : false;
+  return { site, fen: rows.join('/') + ' ' + turn + ' ' + (castling || '-') + ' - 0 ' + (Math.floor(plies / 2) + 1), turn, flipped, plies, live, over };
 }`;
 
 // The position on the selected tab.
@@ -111,20 +121,39 @@ async function waitForMove(plies: number, timeoutMs = 120000): Promise<ChessStat
   return chessState();
 }
 
+// Waits in the page (the code mode script has no timers of its own).
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await pw(`async (page) => { await page.waitForTimeout(${Math.round(ms)}); return true; }`);
+}
+
 // Plays a whole game for the side at the bottom of the board: read, think with the engine, move, wait.
-// movetimeMs: engine time per move; skill 0-20 (20 = strongest).
-async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves?: number } = {}): Promise<{ moves: string[]; final: ChessState }> {
-  const { movetimeMs = 300, skill = 20, maxMoves = 200 } = options;
+// movetimeMs: engine time per move; skill 0-20 (20 = strongest); minDelayMs/maxDelayMs: a random pause
+// before every move we send, so a live game against a person moves at a human pace instead of instantly.
+async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves?: number; minDelayMs?: number; maxDelayMs?: number } = {}): Promise<{ moves: string[]; final: ChessState }> {
+  const { movetimeMs = 300, skill = 20, maxMoves = 200, minDelayMs = 0, maxDelayMs = 0 } = options;
   const moves: string[] = [];
   let state = await chessState();
   const me: 'w' | 'b' = state.flipped ? 'b' : 'w';
   while (!state.over && moves.length < maxMoves) {
     if (state.turn !== me) { state = await waitForMove(state.plies); continue; }
-    const r = JSON.parse(await engine.bestMove({ fen: state.fen, movetimeMs, skill })) as { bestmove: string | null };
-    if (!r.bestmove) break;
-    await playMove(r.bestmove);
-    moves.push(r.bestmove);
-    state = await waitForMove(state.plies); // our own move lands first
+    let fen = state.fen;
+    let played = false;
+    for (let attempt = 0; attempt < 2 && !played; attempt++) {
+      const r = JSON.parse(await engine.bestMove({ fen, movetimeMs, skill })) as { bestmove: string | null };
+      if (!r.bestmove) break;
+      if (maxDelayMs > minDelayMs) await sleep(minDelayMs + Math.random() * (maxDelayMs - minDelayMs));
+      const before = state.plies;
+      await playMove(r.bestmove);
+      const after = await waitForMove(before, 6000);
+      if (after.plies > before) { moves.push(r.bestmove); state = after; played = true; break; }
+      // the click was refused: the castling rights read off the board were a guess (a rook moved and came
+      // back), so drop them and let the engine answer again instead of spinning on an illegal move
+      state = after;
+      if (state.over) break;
+      fen = state.fen.split(' ').map((f, i) => (i === 3 ? '-' : f)).join(' ');
+    }
+    if (!played) break;
     if (state.turn !== me && !state.over) state = await waitForMove(state.plies);
   }
   return { moves, final: state };

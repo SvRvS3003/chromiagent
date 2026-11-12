@@ -123,7 +123,7 @@ const r = await observe(tabId, async (events) => {
 
 ### Chess at engine speed
 
-Stockfish 19 Lite (WASM, GPL-3, in `host/engine/`) is built in. Against a computer bot, in analysis or puzzles on chess.com and lichess, the agent runs one code mode script, `playGame()` from `host/chess.ts`: it reads the board from the page's HTML (no screenshots), asks the engine, plays the move and waits for the reply, about 3 seconds a move instead of minutes. It is not for live games against people: that breaks fair-play rules and gets accounts banned.
+Stockfish 19 Lite (WASM, GPL-3, in `host/engine/`) is built in. Against a computer bot, in analysis or puzzles on chess.com and lichess, the agent runs one code mode script, `playGame()` from `host/chess.ts`: it reads the board from the page's HTML (no screenshots), asks the engine, plays the move and waits for the reply, about 3 seconds a move instead of minutes. The same call plays live games against people: pass `minDelayMs` / `maxDelayMs` and the engine answers each of your turns at a human pace while the opponent's clock runs.
 
 ### It watches, like a video
 
