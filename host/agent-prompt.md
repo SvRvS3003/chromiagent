@@ -50,6 +50,35 @@ return { r, seen };
 ```
 Pass `timeoutSec` a little above `seconds`.
 
+Real-time trading, watching a price and firing at the right moment, reacting to a position's P/L — this is the same pattern with a rule inside the handler, and it is ONE script for the whole session, not one call per tick:
+```ts
+const tabId = 123; // the bound tab with the terminal open
+const t0 = Date.now();
+const r = await observe(tabId, async (events) => {
+  for (const e of events) {
+    // websocket frames carry the price stream — parse them instead of polling the DOM
+    if (e.type === 'ws' && e.message) {
+      const m = JSON.stringify(e.message);
+      // match on the symbol / price fields your terminal sends, e.g. /"p":3887[0-9.]*/
+      console.log('tick', m.slice(0, 120));
+    }
+    // react to the position state, read from the DOM only when the price or DOM changes:
+    if (e.type === 'dom' || e.type === 'ws') {
+      const pnl = await chrome.run_js({ code: `return document.body.innerText` });
+      if (/\+\d+[\d,.]*\s*USD/.test(pnl)) { // your profit condition, e.g. more than +1.00
+        const clicked = await chrome.run_js({ code: `
+          const b = [...document.querySelectorAll('button')].find(x => /Close|Yopish/i.test(x.innerText || ''));
+          if (b) { b.click(); return 'closed'; } return 'no close button';` });
+        console.log('pnl hit, close result:', clicked);
+        return true; // the script ends, the job is done
+      }
+    }
+  }
+}, { seconds: 3600, waitMs: 150 });
+return r;
+```
+Keep the decision logic small and mechanical inside the handler (read price / P&L, compare to the threshold, act, stop). It never blocks, it never leaves the task half done, and it does not reload or re-open anything — one session watches and executes for as long as needed. Never replace this with "read the price → think → click" quick calls in a loop; those lose ticks and get the job done late.
+
 ## Fast, repeated work (games, live forms, anything turn by turn)
 Your own thinking takes seconds per tool call, so never do one tool call per move or per step. Write the whole loop as one code mode script: wait for the page's reaction with `observe` / `untilEvent` (not screenshots), read the state from the DOM with `browser_evaluate` (board squares, scores, text), decide in code, act with Playwright, repeat, all inside the script. Read the page's HTML (`browser_evaluate`, `read_page`, `events`) instead of screenshots: it is many times faster and exact. Use screenshots only when the state is not in the DOM (a canvas).
 

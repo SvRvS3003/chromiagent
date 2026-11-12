@@ -27,6 +27,10 @@ function mcpClient(command, args, env) {
   const waiting = new Map();
   let buf = '';
   let seq = 0;
+  // A spawn failure (ENOENT/EACCES/resource limits) emits 'error', not 'exit': without this handler
+  // the whole codemode process dies as an uncaught exception and every tool call reports "Transport closed".
+  const died = (message) => { for (const w of waiting.values()) w({ error: { message } }); waiting.clear(); };
+  proc.on('error', (e) => died(String(e && e.message || e)));
   proc.stdout.on('data', (d) => {
     buf += d;
     let i;
@@ -37,7 +41,7 @@ function mcpClient(command, args, env) {
       if (m.id !== undefined && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); }
     }
   });
-  proc.on('exit', () => { for (const w of waiting.values()) w({ error: { message: 'Playwright stopped' } }); waiting.clear(); });
+  proc.on('exit', (c) => died(`Playwright stopped (exit ${c})`));
   const rpc = (method, params) => new Promise((resolve, reject) => {
     const id = ++seq;
     waiting.set(id, (m) => (m.error ? reject(new Error(m.error.message)) : resolve(m.result)));
@@ -69,7 +73,9 @@ let running = 0, idleTimer = null;
 function playwrightBusy() {
   running++;
   clearTimeout(idleTimer);
-  if (servers.playwright.proc.exitCode !== null || servers.playwright.proc.killed) servers.playwright = startPlaywright();
+  if (servers.playwright.proc.exitCode !== null || servers.playwright.proc.killed) {
+    try { servers.playwright = startPlaywright(); } catch (e) { console.error('could not restart Playwright:', e); }
+  }
 }
 function playwrightDone() {
   if (--running) return;
@@ -119,12 +125,14 @@ const LIBRARY = ['observe.ts', 'chess.ts'].map((f) => fs.readFileSync(path.join(
 function runTypeScript(code, timeoutSec = 300) {
   const limit = Math.min(Math.max(timeoutSec, 10), 1800);
   const js = stripTypeScriptTypes(`async function __main(chrome, playwright, engine, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
-  const child = fork(path.join(__dirname, 'runner.js'), [], {
-    execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-  });
   playwrightBusy();
   return new Promise((resolve, reject) => {
+    const child = fork(path.join(__dirname, 'runner.js'), [], {
+      execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    // fork() failure is an 'error' event on the child: without a handler the whole codemode dies.
+    child.on('error', (e) => reject(new Error(`the script process could not start: ${(e && e.message) || e}`)));
     const timer = setTimeout(() => { child.kill(); reject(new Error(`Script timed out after ${limit}s (raise timeoutSec, up to 1800)`)); }, limit * 1000);
     child.on('message', async (msg) => {
       if (msg.type === 'call') {
@@ -173,7 +181,7 @@ async function handle({ id, method, params }) {
       inputSchema: { type: 'object', properties: { fen: { type: 'string' }, moves: { type: 'array', items: { type: 'string' } }, movetimeMs: { type: 'number', description: 'Think time, default 300' }, skill: { type: 'number', description: '0-20, default 20' }, multipv: { type: 'number', description: 'Best N lines, 1-5' } } },
     }, {
       name: 'run_typescript',
-      description: 'Code mode: run ONE TypeScript script that does the whole task, start to finish — plan first, then one call. Fast multi-step work: clicks, fills, waits, retries, loops and live watching, all inside the script. Never alternate `run_typescript` with quick `chrome.*` calls mid-task — a script that needs to navigate, click, read, verify and act on the result does all of that itself and returns one answer; if it fails, rerun one corrected script, not a chain of quick calls. Direct quick-mode tools are for a single trivial action only. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright stays connected for 5 minutes between the scripts of one session, so one task never reconnects mid-way. Work in your own tab (open_tab / bind_tab): the script drives a tab the user is not looking at, so never take the one they are on. Scripts stop after timeoutSec (default 300, max 1800).\n\nContinuous watching: `observe(tabId, handler, { seconds })` calls your handler with every new batch of page events the moment they happen (DOM changes, network, WebSocket, console, errors, navigation, user actions, media) until time runs out or the handler returns true; the handler can analyse and act in between. `untilEvent(tabId, match)` waits for one event. Their source:\n\n' + LIBRARY + '\n\nChess engine: `engine.bestMove({ fen, moves?, movetimeMs?, depth?, skill?, multipv? })` returns JSON text `{ bestmove, ponder, lines: [{ depth, cp | mate, pv }] }` from Stockfish 19 Lite. It plays computer bots, analysis and puzzles, and rated live games against people too: `playGame({ movetimeMs, minDelayMs, maxDelayMs })` answers every move on your turn, accepts the site\'s fair-play agreement if one is shown (dismissGate() does that), and waits through the opponent\'s. Moves land through arc-shaped synthetic events paced by the host together with `chrome.pointer_stroke`, so they read as one motion of a hand — no debugger is attached during a game, so the Chrome debug bar never shows. `dismissGate()` presses the agree button on any rules/fair-play sheet, wherever the task needs it.\n\nAvailable APIs:\n\n' + declarations,
+      description: 'Code mode: run ONE TypeScript script that does the whole task, start to finish — plan first, then one call. Fast multi-step work: clicks, fills, waits, retries, loops and live watching, all inside the script. Never alternate `run_typescript` with quick `chrome.*` calls mid-task — a script that needs to navigate, click, read, verify and act on the result does all of that itself and returns one answer; if it fails, rerun one corrected script, not a chain of quick calls. Real-time watching is ONE observe() call with a handler that reads values from `chrome.run_js` and acts on them (price, P/L, inventory) — never per-tick polling with separate calls. Direct quick-mode tools are for a single trivial action only. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright stays connected for 5 minutes between the scripts of one session, so one task never reconnects mid-way. Work in your own tab (open_tab / bind_tab): the script drives a tab the user is not looking at, so never take the one they are on. Scripts stop after timeoutSec (default 300, max 1800).\n\nContinuous watching: `observe(tabId, handler, { seconds })` calls your handler with every new batch of page events the moment they happen (DOM changes, network, WebSocket, console, errors, navigation, user actions, media) until time runs out or the handler returns true; the handler can analyse and act in between. `untilEvent(tabId, match)` waits for one event. Their source:\n\n' + LIBRARY + '\n\nChess engine: `engine.bestMove({ fen, moves?, movetimeMs?, depth?, skill?, multipv? })` returns JSON text `{ bestmove, ponder, lines: [{ depth, cp | mate, pv }] }` from Stockfish 19 Lite. It plays computer bots, analysis and puzzles, and rated live games against people too: `playGame({ movetimeMs, minDelayMs, maxDelayMs })` answers every move on your turn, accepts the site\'s fair-play agreement if one is shown (dismissGate() does that), and waits through the opponent\'s. Moves land through arc-shaped synthetic events paced by the host together with `chrome.pointer_stroke`, so they read as one motion of a hand — no debugger is attached during a game, so the Chrome debug bar never shows. `dismissGate()` presses the agree button on any rules/fair-play sheet, wherever the task needs it.\n\nAvailable APIs:\n\n' + declarations,
       inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'TypeScript function body' }, timeoutSec: { type: 'number', description: 'Longest run in seconds (default 300, max 1800); raise it for long observe() loops' } }, required: ['code'] },
     }] });
   }
