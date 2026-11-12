@@ -104,7 +104,7 @@ While the agent works on a page, only its pointer acts there: your mouse clicks 
 
 ### It works in the background, in its own tabs
 
-The agent never pulls you to its tab. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts, screenshots and `watch` all work on tabs you are not looking at. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
+The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts, screenshots and `watch` all work on tabs you are not looking at. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
 
 ### It follows everything that happens on a site
 
@@ -187,8 +187,9 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 
 | Tool | What it does |
 |---|---|
-| `list_tabs` | Every open tab in every window: id, title, URL, active, playing audio |
-| `activate_tab` · `open_tab` · `close_tab` | Switch, open and close tabs |
+| `list_tabs` | Every open tab in every window: id, title, URL, active, playing audio, and which one is the agent's (`mine`, `bound`) |
+| `open_tab` · `bind_tab` | Open a tab in the background and work in it, or pick the tab you already have open: the agent's target stops moving when you switch |
+| `activate_tab` · `close_tab` | Switch to a tab when you ask to see it, close one |
 | `navigate` | Load a URL, go back or forward, reload |
 | `read_page` | Page text, plus numbered buttons, links and inputs it can act on |
 | `click` · `type` · `scroll` | Act on an element by its number or a CSS selector |

@@ -83,29 +83,68 @@ async function chessState(): Promise<ChessState> {
   return pw<ChessState>(`async (page) => page.evaluate(${READ_BOARD})`);
 }
 
-// Plays a UCI move (e2e4, e7e8q) by clicking the two squares; promotions pick the piece.
-async function playMove(uci: string): Promise<void> {
+// Plays a UCI move (e2e4, e7e8q) by pressing the two squares inside the page: synthetic pointer events,
+// so the move lands while the tab sits in the background and the user never gets pulled to it. With
+// `real: true` it sends Playwright mouse clicks instead, for a board that ignores synthetic events.
+async function playMove(uci: string, options: { real?: boolean } = {}): Promise<void> {
+  const from = uci.slice(0, 2), to = uci.slice(2, 4), promo = uci[4] || '';
+  if (options.real) {
+    await pw(`async (page) => {
+      const info = await page.evaluate(() => {
+        const b = document.querySelector('wc-chess-board, chess-board, cg-board');
+        const r = b.getBoundingClientRect();
+        const flipped = b.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
+        return { x: r.left, y: r.top, s: r.width / 8, flipped };
+      });
+      const center = (sq) => {
+        const f = 'abcdefgh'.indexOf(sq[0]) + 1, r = Number(sq[1]);
+        return info.flipped ? [info.x + (8 - f + 0.5) * info.s, info.y + (r - 0.5) * info.s] : [info.x + (f - 0.5) * info.s, info.y + (8 - r + 0.5) * info.s];
+      };
+      const [a, b] = [center('${from}'), center('${to}')];
+      await page.mouse.click(a[0], a[1]);
+      await page.mouse.click(b[0], b[1]);
+      if ('${promo}') {
+        await page.waitForTimeout(150);
+        const p = '${promo}';
+        const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+        const pick = page.locator('.promotion-piece.w' + p + ', .promotion-piece.b' + p + ', #promotion-choice piece.' + names[p]).first();
+        if (await pick.count()) await pick.click();
+      }
+      return true;
+    }`);
+    return;
+  }
   await pw(`async (page) => {
-    const info = await page.evaluate(() => {
-      const b = document.querySelector('wc-chess-board, chess-board, cg-board');
-      const r = b.getBoundingClientRect();
-      const flipped = b.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
-      return { x: r.left, y: r.top, s: r.width / 8, flipped };
-    });
-    const center = (sq) => {
-      const f = 'abcdefgh'.indexOf(sq[0]) + 1, r = Number(sq[1]);
-      return info.flipped ? [info.x + (8 - f + 0.5) * info.s, info.y + (r - 0.5) * info.s] : [info.x + (f - 0.5) * info.s, info.y + (8 - r + 0.5) * info.s];
-    };
-    const [a, b] = [center('${uci.slice(0, 2)}'), center('${uci.slice(2, 4)}')];
-    await page.mouse.click(a[0], a[1]);
-    await page.mouse.click(b[0], b[1]);
-    if ('${uci[4] || ''}') {
-      await page.waitForTimeout(150);
-      const p = '${uci[4] || 'q'}';
-      const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
-      const pick = page.locator('.promotion-piece.w' + p + ', .promotion-piece.b' + p + ', #promotion-choice piece.' + names[p]).first();
-      if (await pick.count()) await pick.click();
-    }
+    await page.evaluate(({ from, to, promo }) => {
+      const board = document.querySelector('wc-chess-board, chess-board, cg-board');
+      if (!board) throw new Error('no board on this tab');
+      const r = board.getBoundingClientRect();
+      const flipped = board.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
+      const s = r.width / 8;
+      const center = (sq) => {
+        const f = 'abcdefgh'.indexOf(sq[0]) + 1, k = Number(sq[1]);
+        return flipped ? [r.left + (8 - f + 0.5) * s, r.top + (k - 0.5) * s] : [r.left + (f - 0.5) * s, r.top + (8 - k + 0.5) * s];
+      };
+      const send = (px, py, type, buttons) => {
+        // The deepest element under the point, so the event starts where a real cursor would.
+        const el = document.elementFromPoint(px, py) || board;
+        const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: px, clientY: py, screenX: px, screenY: py, button: 0, buttons, isPrimary: true, pointerId: 1, pointerType: 'mouse' };
+        el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, o) : new MouseEvent(type, o));
+      };
+      const [a, b] = [center(from), center(to)];
+      send(a[0], a[1], 'pointermove', 0); send(a[0], a[1], 'pointerdown', 1); send(a[0], a[1], 'mousedown', 1);
+      send(b[0], b[1], 'pointermove', 1); send(b[0], b[1], 'pointerup', 0); send(b[0], b[1], 'mouseup', 0); send(b[0], b[1], 'click', 0);
+      if (promo) {
+        const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+        setTimeout(() => {
+          const want = names[promo];
+          const el = [...document.querySelectorAll('.promotion-piece, promotion-choice piece, .promotion-choice piece, #promotion-choice piece')]
+            .find((e) => [...e.classList].some((c) => c === want || c === promo));
+          if (el) { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0, buttons: 1 })); el.click(); }
+        }, 150);
+      }
+      return true;
+    }, { from: '${from}', to: '${to}', promo: '${promo}' });
     return true;
   }`);
 }
@@ -130,7 +169,7 @@ async function sleep(ms: number): Promise<void> {
 // Plays a whole game for the side at the bottom of the board: read, think with the engine, move, wait.
 // movetimeMs: engine time per move; skill 0-20 (20 = strongest); minDelayMs/maxDelayMs: a random pause
 // before every move we send, so a live game against a person moves at a human pace instead of instantly.
-async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves?: number; minDelayMs?: number; maxDelayMs?: number } = {}): Promise<{ moves: string[]; final: ChessState }> {
+async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves?: number; minDelayMs?: number; maxDelayMs?: number } = {}): Promise<{ moves: string[]; final: ChessState; note?: string }> {
   const { movetimeMs = 300, skill = 20, maxMoves = 200, minDelayMs = 0, maxDelayMs = 0 } = options;
   const moves: string[] = [];
   let state = await chessState();
@@ -139,21 +178,21 @@ async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves
     if (state.turn !== me) { state = await waitForMove(state.plies); continue; }
     let fen = state.fen;
     let played = false;
-    for (let attempt = 0; attempt < 2 && !played; attempt++) {
+    // The board may refuse a click: the castling rights read off it are a guess (a rook moved and came
+    // back), or the site ignores synthetic events. Then the rights are dropped and a real click follows.
+    for (let attempt = 0; attempt < 3 && !played; attempt++) {
+      if (attempt === 2) fen = fen.split(' ').map((f, i) => (i === 3 ? '-' : f)).join(' ');
       const r = JSON.parse(await engine.bestMove({ fen, movetimeMs, skill })) as { bestmove: string | null };
       if (!r.bestmove) break;
       if (maxDelayMs > minDelayMs) await sleep(minDelayMs + Math.random() * (maxDelayMs - minDelayMs));
       const before = state.plies;
-      await playMove(r.bestmove);
+      await playMove(r.bestmove, { real: attempt > 0 });
       const after = await waitForMove(before, 6000);
       if (after.plies > before) { moves.push(r.bestmove); state = after; played = true; break; }
-      // the click was refused: the castling rights read off the board were a guess (a rook moved and came
-      // back), so drop them and let the engine answer again instead of spinning on an illegal move
       state = after;
       if (state.over) break;
-      fen = state.fen.split(' ').map((f, i) => (i === 3 ? '-' : f)).join(' ');
     }
-    if (!played) break;
+    if (!played) return { moves, final: state, note: `the board did not accept a move (${moves.length} played, plies ${state.plies}, turn ${state.turn}); check that your tab is the game and call chessState()` };
     if (state.turn !== me && !state.over) state = await waitForMove(state.plies);
   }
   return { moves, final: state };

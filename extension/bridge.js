@@ -132,10 +132,45 @@ const answerText = (r) => {
   return (ANSWERS[r?.type] || ANSWERS.cancel)(r?.value);
 };
 
+// ---- the tab this agent works in ----
+// The agent's own tab, not the user's: it stays put while the user moves between their tabs, so both
+// work at the same time. open_tab() and bind_tab() set it; it is kept for the browser session.
+let boundTab = null;
+const boundKey = async () => `bound:${(await panelReady).windowId}`;
+(async () => {
+  try { boundTab = (await chrome.storage.session.get(await boundKey()))[await boundKey()] ?? null; } catch { boundTab = null; }
+  if (boundTab != null) await chrome.tabs.get(boundTab).catch(() => { boundTab = null; });
+})();
+async function setBound(tabId) {
+  boundTab = tabId;
+  try { await chrome.storage.session.set({ [await boundKey()]: tabId }); } catch {}
+}
+// An explicit tabId wins, then the bound tab. Without either the agent is told to open or pick a tab:
+// guessing "the active one" is what used to pull the agent onto the tab the user is working in.
+async function tabArg(args = {}) {
+  const id = args.tabId ?? boundTab;
+  if (id == null) throw new Error('no tab picked yet: call open_tab({ url }) for new work, or bind_tab({ tabId }) for a tab the user pointed at (tabId from list_tabs)');
+  try { await chrome.tabs.get(id); } catch { if (id === boundTab) await setBound(null); throw new Error(`tab ${id} is gone; call list_tabs`); }
+  return id;
+}
+
 const tools = {
   async list_tabs() {
     const tabs = await chrome.tabs.query({});
-    return tabs.map((t) => ({ tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, audible: t.audible || undefined, pinned: t.pinned || undefined }));
+    const groups = new Map();
+    for (const t of tabs) {
+      if (t.groupId == null || t.groupId < 0 || groups.has(t.groupId)) continue;
+      groups.set(t.groupId, await chrome.tabGroups.get(t.groupId).catch(() => null));
+    }
+    return tabs.map((t) => {
+      const group = t.groupId != null && t.groupId >= 0 ? groups.get(t.groupId) : null;
+      return { tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: group?.title === 'Chromiagent' || undefined, bound: t.id === boundTab || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined };
+    });
+  },
+  async bind_tab({ tabId }) {
+    const t = await chrome.tabs.get(tabId);
+    await setBound(tabId);
+    return `working in "${t.title}" (${t.url}). It stays your tab while the user moves between theirs; leave tabId out and the tools act here.`;
   },
   async activate_tab({ tabId }) {
     const t = await chrome.tabs.update(tabId, { active: true });
@@ -146,9 +181,14 @@ const tools = {
     noFile(url);
     const t = await chrome.tabs.create({ url, active });
     await intoAgentGroup(t);
-    return { tabId: t.id, windowId: t.windowId };
+    await setBound(t.id);
+    return { tabId: t.id, windowId: t.windowId, bound: true };
   },
-  async close_tab({ tabId }) { await chrome.tabs.remove(tabId); return 'closed'; },
+  async close_tab({ tabId }) {
+    await chrome.tabs.remove(tabId);
+    if (tabId === boundTab) await setBound(null);
+    return 'closed';
+  },
   async navigate({ tabId, url, action }) {
     noFile(url);
     if (url) await chrome.tabs.update(tabId, { url });
@@ -187,10 +227,11 @@ const tools = {
   // A question next to the agent's pointer; with ref/selector the user fills that field on the page.
   async ask_user({ tabId, question, options, placeholder, ref, selector }) {
     const { windowId } = await panelReady;
-    const tab = tabId ? await chrome.tabs.get(tabId) : (await chrome.tabs.query({ active: true, windowId }))[0];
+    // No bound tab: the card opens in the panel, never on whatever the user happens to be looking at.
+    const tab = tabId ? await chrome.tabs.get(tabId).catch(() => null) : null;
     const field = ref != null || !!selector;
-    if (!/^https?:/i.test(tab?.url || '')) {
-      if (field) throw new Error('fields can only be filled on a web page');
+    if (!tab || !/^https?:/i.test(tab.url || '')) {
+      if (field) throw new Error('fields can only be filled on a web page: bind_tab the page with the field');
       return answerText(await panelAsk({ question, options, placeholder }));
     }
     // Never pulls the user over: a question about a tab they are not looking at opens in the panel,
@@ -386,6 +427,9 @@ async function waitLoaded(tabId, ms = 15000) {
   }
 }
 
+// Every tool that acts on a page: it gets the agent's bound tab when no tabId is given.
+const TABBED = new Set(['activate_tab', 'close_tab', 'navigate', 'read_page', 'click', 'type', 'press_key', 'scroll', 'run_js', 'screenshot', 'monitor', 'events', 'watch', 'ask_user']);
+
 async function connectBridge() {
   const ws = new WebSocket(`ws://127.0.0.1:17371/bridge?panel=${(await panelReady).id}`);
   ws.onmessage = async (e) => {
@@ -397,8 +441,10 @@ async function connectBridge() {
     let out;
     try {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
-      if (!['watch', 'screenshot', 'monitor', 'events'].includes(tool)) glow(args?.tabId); // looking is not acting
-      const r = await tools[tool](args);
+      const a = TABBED.has(tool) ? { ...(args || {}), tabId: await tabArg(args || {}) } : { ...(args || {}) };
+      if (tool === 'ask_user' && a.tabId == null && boundTab != null) a.tabId = boundTab;
+      if (!['watch', 'screenshot', 'monitor', 'events'].includes(tool)) glow(a?.tabId); // looking is not acting
+      const r = await tools[tool](a);
       if (tool === 'open_tab') glow(r.tabId);
       out = r && r.image ? { id, image: r.image, result: r.text } : r && r.error ? { id, error: r.error } : { id, result: r };
     } catch (err) {

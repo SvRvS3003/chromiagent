@@ -107,8 +107,9 @@ const AGENTS = {
   // Windows runs cmd.exe, which passes "" through to claude (Windows PowerShell 5 would drop it).
   claude: `claude --tools ${WIN ? '""' : "''"} --no-chrome --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`,
   opencode: 'opencode',
-  // Codex reads AGENTS.md from the folder; its own shell stays read-only.
-  codex: `codex --sandbox read-only ${[...Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)), ...codexOff.map((n) => `mcp_servers.${n}.enabled=false`)].map((a) => `-c ${q(a)}`).join(' ')}`,
+  // Codex reads AGENTS.md from the folder; its own shell stays read-only, and its tool calls always
+  // run without asking the user to approve each one (the browser tools are the whole job).
+  codex: `codex --sandbox read-only -c ${q('approval_policy="never"')} ${[...Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)), ...codexOff.map((n) => `mcp_servers.${n}.enabled=false`)].map((a) => `-c ${q(a)}`).join(' ')}`,
   qwen: 'qwen',
   gemini: 'gemini',
   // Built-in file and shell tools off where the CLI allows it; the others are told by AGENTS.md.

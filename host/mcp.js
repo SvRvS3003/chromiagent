@@ -2,31 +2,32 @@
 // Chromiagent MCP server, by SvRvS: gives the agent tools for every open Chrome tab, via the side panel bridge.
 const WebSocket = require('ws');
 
-const TAB = { tabId: { type: 'number', description: 'Tab id from list_tabs' } };
+const TAB = { tabId: { type: 'number', description: 'Tab id from list_tabs. Leave it out to work in your bound tab (open_tab / bind_tab)' } };
 const TARGET = {
   ...TAB,
   ref: { type: 'number', description: 'Element number from read_page' },
   selector: { type: 'string', description: 'CSS selector (alternative to ref)' },
 };
 const TOOLS = [
-  ['list_tabs', 'List every open tab in every Chrome window (id, window, active, title, url, audible).', {}, []],
-  ['activate_tab', 'Switch to a tab and focus its window.', TAB, ['tabId']],
-  ['open_tab', 'Open a new tab in the background (the user stays where they are). active: true only if the user asked to see it.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
+  ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). mine: a tab you opened; bound: the tab you are working in. The user\'s own tabs are the ones without mine.', {}, []],
+  ['open_tab', 'Open a new tab in the background (the user stays where they are) and make it your working tab. active: true only if the user asked to see it.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
+  ['bind_tab', 'Work in this tab from now on: the user switching between their tabs does not move your target. Omit tabId afterwards and the tools act here. Use it when the user points at a tab ("this page", "shu tab"), and to switch between several jobs.', TAB, ['tabId']],
+  ['activate_tab', 'Switch to a tab and focus its window. Only when the user asked to see it.', TAB, []],
   ['close_tab', 'Close a tab.', TAB, ['tabId']],
-  ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, ['tabId']],
-  ['read_page', 'Read a tab: title, url, visible text, and numbered interactive elements (use the numbers as ref).', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, ['tabId']],
-  ['click', 'Click an element in a tab (by ref from read_page or CSS selector).', TARGET, ['tabId']],
-  ['type', 'Type text into an input/textarea/contenteditable; optional submit presses Enter / submits the form.', { ...TARGET, text: { type: 'string' }, submit: { type: 'boolean' } }, ['tabId', 'text']],
-  ['press_key', 'Send a real key press to the tab (e.g. Enter, Escape, Tab, ArrowDown).', { ...TAB, key: { type: 'string' } }, ['tabId', 'key']],
-  ['scroll', 'Scroll a tab by pixels (positive = down).', { ...TAB, dy: { type: 'number' } }, ['tabId', 'dy']],
-  ['run_js', 'Evaluate JavaScript in the page (bypasses page CSP). Returns the value; promises are awaited.', { ...TAB, code: { type: 'string' } }, ['tabId', 'code']],
-  ['screenshot', 'Screenshot of a tab (activates it first).', TAB, ['tabId']],
+  ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, []],
+  ['read_page', 'Read a tab: title, url, visible text, and numbered interactive elements (use the numbers as ref).', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, []],
+  ['click', 'Click an element in a tab (by ref from read_page or CSS selector).', TARGET, []],
+  ['type', 'Type text into an input/textarea/contenteditable; optional submit presses Enter / submits the form.', { ...TARGET, text: { type: 'string' }, submit: { type: 'boolean' } }, ['text']],
+  ['press_key', 'Send a real key press to the tab (e.g. Enter, Escape, Tab, ArrowDown).', { ...TAB, key: { type: 'string' } }, ['key']],
+  ['scroll', 'Scroll a tab by pixels (positive = down).', { ...TAB, dy: { type: 'number' } }, ['dy']],
+  ['run_js', 'Evaluate JavaScript in the page (bypasses page CSP). Returns the value; promises are awaited.', { ...TAB, code: { type: 'string' } }, ['code']],
+  ['screenshot', 'Screenshot of a tab, in the background: the user stays where they are.', TAB, []],
   ['watch', 'Watch a tab like a short video: captures it about twice a second for `seconds` (1-30, default 6) and returns the frames where something changed as one timeline image, with times. Use it for video, animation, loading, live feeds, or to see what a click set off. untilChange: return the moment the page changes; untilText: return the moment that text appears. Loop watch -> decide -> act -> watch to react in real time.',
-    { ...TAB, seconds: { type: 'number' }, untilChange: { type: 'boolean' }, untilText: { type: 'string' } }, ['tabId']],
+    { ...TAB, seconds: { type: 'number' }, untilChange: { type: 'boolean' }, untilText: { type: 'string' } }, []],
   ['monitor', 'Start (or stop) continuously recording everything that happens on a tab: DOM changes, fetch/XHR/WebSocket traffic, console output and errors, URL/title changes, the user\'s clicks and inputs, dialogs, media. Then call events to receive it.',
-    { ...TAB, action: { type: 'string', enum: ['start', 'stop'] } }, ['tabId']],
+    { ...TAB, action: { type: 'string', enum: ['start', 'stop'] } }, []],
   ['events', 'New events from a monitored tab (starts monitoring if needed). Returns the moment something happens, or after waitMs (default 15000, max 110000) with none. Each event has `at` (seconds since monitoring began) and `type`: dom, fetch, xhr, ws, console, error, nav, title, user, scroll, dialog, media, tab.',
-    { ...TAB, waitMs: { type: 'number' }, max: { type: 'number', description: 'Most events to return, newest kept (default 150)' } }, ['tabId']],
+    { ...TAB, waitMs: { type: 'number' }, max: { type: 'number', description: 'Most events to return, newest kept (default 150)' } }, []],
   ['ask_user', 'Ask the user something without leaving the page: a card pops up next to your pointer with a reply box and, if given, ready answers to click. Waits up to 10 minutes and returns their answer. With ref/selector the card points at that field and the user types into it on the page (passwords, verification codes, card details); you get "done", never the value.',
     { tabId: { type: 'number', description: 'Tab to ask on; default: the active tab' },
       question: { type: 'string' },
