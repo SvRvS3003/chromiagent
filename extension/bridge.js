@@ -212,6 +212,14 @@ const tools = {
     return inPage(tabId, pageAct, ['type', ref ?? null, selector ?? null, text, !!submit, 0]);
   },
   scroll: ({ tabId, dy }) => inPage(tabId, pageAct, ['scroll', null, null, null, false, dy]),
+  // The pointer's human arc, for drags and chess moves: scan a friendly piece or two, glide in, dwell,
+  // press, glide out, rest nearby. Runs through the extension so the pointer is what the user sees.
+  async pointer_stroke({ tabId, from, to, decoys, color, label }) {
+    if (!from || !to) throw new Error('pointer_stroke needs from and to ({ x, y } each)');
+    const num = (v) => Number(v);
+    const args = [num(from.x), num(from.y), num(to.x), num(to.y), { decoys: Math.min(2, Math.max(0, num(decoys) || 0)), color: color || null, label: label || null }];
+    return ui(tabId, 'stroke', ...args);
+  },
   press_key: ({ tabId, key }) => withDebugger(tabId, async (send) => {
     const code = KEYS[key] ?? key.toUpperCase().charCodeAt(0);
     const text = key === 'Enter' ? '\r' : key.length === 1 ? key : undefined;
@@ -428,7 +436,7 @@ async function waitLoaded(tabId, ms = 15000) {
 }
 
 // Every tool that acts on a page: it gets the agent's bound tab when no tabId is given.
-const TABBED = new Set(['activate_tab', 'close_tab', 'navigate', 'read_page', 'click', 'type', 'press_key', 'scroll', 'run_js', 'screenshot', 'monitor', 'events', 'watch', 'ask_user']);
+const TABBED = new Set(['activate_tab', 'close_tab', 'navigate', 'read_page', 'click', 'type', 'press_key', 'scroll', 'run_js', 'screenshot', 'monitor', 'events', 'watch', 'ask_user', 'pointer_stroke']);
 
 async function connectBridge() {
   const ws = new WebSocket(`ws://127.0.0.1:17371/bridge?panel=${(await panelReady).id}`);

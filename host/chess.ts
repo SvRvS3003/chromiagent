@@ -78,31 +78,89 @@ const READ_BOARD = String.raw`() => {
   return { site, fen: rows.join('/') + ' ' + turn + ' ' + (castling || '-') + ' - 0 ' + (Math.floor(plies / 2) + 1), turn, flipped, plies, live, over };
 }`;
 
+// The fair-play / rules gate some sites show before a rated game: one sheet, one agree button.
+// The account and the games are the user's; the agreement is theirs to give, so it is clicked.
+const DISMISS_GATE = String.raw`() => {
+  const GATE = /fair ?play|external assistance|outside assistance|engine|cheat|agreement|rules|qoida|ro'?zi|agreement|acord/i;
+  const OK = /agree|accept|ok|continue|got it|understood|yes|ro'?zi|qabul|davom|tush|tasd|okay|i agree|davomi/i;
+  for (const sel of ['dialog[open]', '[role=dialog]', '.cc-modal-component', '.cc-modal-dialog', '.modal', '.modal-content']) {
+    for (const dlg of document.querySelectorAll(sel)) {
+      const text = (dlg.innerText || '').trim();
+      if (!text || !GATE.test(text)) continue;
+      const btns = [...dlg.querySelectorAll('button')];
+      const hit = btns.find((b) => OK.test((b.innerText || '').trim())) || btns[btns.length - 1];
+      if (hit) { hit.click(); return (hit.innerText || 'ok').trim().slice(0, 40); }
+    }
+  }
+  return null;
+}`;
+
+// Dismisses a fair-play / rules agreement shown on a site. Returns the clicked button's label, or null.
+async function dismissGate(): Promise<string | null> {
+  return pw<string | null>(`async (page) => page.evaluate(${DISMISS_GATE})`);
+}
+
+interface Pt { x: number; y: number }
+const easeCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+// A hand-like arc between two points: a wide bezier bend, ease in-out, noise that fades at the ends.
+function arcPoints(a: Pt, b: Pt): Pt[] {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+  const nx = -dy / d, ny = dx / d;
+  const bend = (0.10 + Math.random() * 0.24) * d * (Math.random() < 0.5 ? 1 : -1);
+  const cx = (a.x + b.x) / 2 + nx * bend, cy = (a.y + b.y) / 2 + ny * bend;
+  const N = Math.max(12, Math.min(26, Math.round(d / 13)));
+  const pts: Pt[] = [];
+  for (let i = 1; i <= N; i++) {
+    const t = i / N, e = easeCubic(t), m = 1 - e, j = Math.sin(Math.PI * e) * 1.5;
+    pts.push({ x: m * m * a.x + 2 * m * e * cx + e * e * b.x + (Math.random() - 0.5) * j * nx * 2,
+               y: m * m * a.y + 2 * m * e * cy + e * e * b.y + (Math.random() - 0.5) * j * ny * 2 });
+  }
+  return pts;
+}
+
 // The position on the selected tab.
 async function chessState(): Promise<ChessState> {
   return pw<ChessState>(`async (page) => page.evaluate(${READ_BOARD})`);
 }
 
-// Plays a UCI move (e2e4, e7e8q) by pressing the two squares inside the page: synthetic pointer events,
-// so the move lands while the tab sits in the background and the user never gets pulled to it. With
-// `real: true` it sends Playwright mouse clicks instead, for a board that ignores synthetic events.
-async function playMove(uci: string, options: { real?: boolean } = {}): Promise<void> {
+// Plays a UCI move (e2e4, e7e8q). The pointer arcs in like a hand: it glances at a friendly piece or
+// two, glides to the from-square, dwells, presses, drags along a curved path with noise, releases, and
+// rests near the board. With `real: true` the drag goes through Playwright's mouse instead, for a board
+// that ignores synthetic events. The visible pointer is driven through the extension, so what the user
+// sees is one motion, not a teleport.
+async function playMove(uci: string, options: { real?: boolean; color?: 'w' | 'b' } = {}): Promise<void> {
   const from = uci.slice(0, 2), to = uci.slice(2, 4), promo = uci[4] || '';
+  const q = await pw<{ from: Pt; to: Pt; flipped: boolean; last: Pt | null }>(`async (page) => page.evaluate(() => {
+    document.addEventListener('pointermove', (e) => { window.__caPointer = { x: e.clientX, y: e.clientY }; }, true);
+    const board = document.querySelector('wc-chess-board, chess-board, cg-board');
+    if (!board) throw new Error('no board on this tab');
+    const r = board.getBoundingClientRect();
+    const flipped = board.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
+    const s = r.width / 8;
+    const center = (sq) => {
+      const f = 'abcdefgh'.indexOf(sq[0]) + 1, k = Number(sq[1]);
+      return flipped ? { x: r.left + (8 - f + 0.5) * s, y: r.top + (k - 0.5) * s } : { x: r.left + (f - 0.5) * s, y: r.top + (8 - k + 0.5) * s };
+    };
+    return { from: center('${from}'), to: center('${to}'), flipped, last: window.__caPointer || null };
+  })`);
+  const me = q.flipped ? 'b' : 'w';
+  const stroke: Promise<unknown> = (typeof chrome !== 'undefined' && chrome.pointer_stroke)
+    ? chrome.pointer_stroke({ from: q.from, to: q.to, decoys: 1, color: options.color || me }).catch(() => null)
+    : Promise.resolve(null);
   if (options.real) {
+    const stretch = arcPoints(q.last || { x: q.from.x, y: q.from.y + 140 }, q.from);
+    const drag = arcPoints(q.from, q.to);
     await pw(`async (page) => {
-      const info = await page.evaluate(() => {
-        const b = document.querySelector('wc-chess-board, chess-board, cg-board');
-        const r = b.getBoundingClientRect();
-        const flipped = b.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
-        return { x: r.left, y: r.top, s: r.width / 8, flipped };
-      });
-      const center = (sq) => {
-        const f = 'abcdefgh'.indexOf(sq[0]) + 1, r = Number(sq[1]);
-        return info.flipped ? [info.x + (8 - f + 0.5) * info.s, info.y + (r - 0.5) * info.s] : [info.x + (f - 0.5) * info.s, info.y + (8 - r + 0.5) * info.s];
-      };
-      const [a, b] = [center('${from}'), center('${to}')];
-      await page.mouse.click(a[0], a[1]);
-      await page.mouse.click(b[0], b[1]);
+      const approach = ${JSON.stringify(stretch)};
+      const drag = ${JSON.stringify(drag)};
+      for (const p of approach) { await page.mouse.move(p.x, p.y); await page.waitForTimeout(4 + Math.random() * 9); }
+      await page.waitForTimeout(60 + Math.random() * 140);
+      await page.mouse.down();
+      await page.waitForTimeout(35 + Math.random() * 70);
+      for (const p of drag) { await page.mouse.move(p.x, p.y); await page.waitForTimeout(4 + Math.random() * 9); }
+      await page.waitForTimeout(25 + Math.random() * 60);
+      await page.mouse.up();
       if ('${promo}') {
         await page.waitForTimeout(150);
         const p = '${promo}';
@@ -112,41 +170,61 @@ async function playMove(uci: string, options: { real?: boolean } = {}): Promise<
       }
       return true;
     }`);
+    await stroke;
     return;
   }
-  await pw(`async (page) => {
-    await page.evaluate(({ from, to, promo }) => {
+  await Promise.all([stroke, pw(`async (page) => {
+    await page.evaluate(({ from: A, to: B, promo, last }) => {
+      const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
       const board = document.querySelector('wc-chess-board, chess-board, cg-board');
       if (!board) throw new Error('no board on this tab');
-      const r = board.getBoundingClientRect();
-      const flipped = board.classList.contains('flipped') || !!document.querySelector('.cg-wrap.orientation-black');
-      const s = r.width / 8;
-      const center = (sq) => {
-        const f = 'abcdefgh'.indexOf(sq[0]) + 1, k = Number(sq[1]);
-        return flipped ? [r.left + (8 - f + 0.5) * s, r.top + (k - 0.5) * s] : [r.left + (f - 0.5) * s, r.top + (8 - k + 0.5) * s];
-      };
-      const send = (px, py, type, buttons) => {
-        // The deepest element under the point, so the event starts where a real cursor would.
-        const el = document.elementFromPoint(px, py) || board;
-        const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: px, clientY: py, screenX: px, screenY: py, button: 0, buttons, isPrimary: true, pointerId: 1, pointerType: 'mouse' };
+      const send = (p, type, buttons) => {
+        const el = document.elementFromPoint(p.x, p.y) || board;
+        const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: p.x, clientY: p.y, screenX: p.x, screenY: p.y, button: 0, buttons, isPrimary: true, pointerId: 1, pointerType: 'mouse' };
         el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, o) : new MouseEvent(type, o));
       };
-      const [a, b] = [center(from), center(to)];
-      send(a[0], a[1], 'pointermove', 0); send(a[0], a[1], 'pointerdown', 1); send(a[0], a[1], 'mousedown', 1);
-      send(b[0], b[1], 'pointermove', 1); send(b[0], b[1], 'pointerup', 0); send(b[0], b[1], 'mouseup', 0); send(b[0], b[1], 'click', 0);
-      if (promo) {
-        const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
-        setTimeout(() => {
-          const want = names[promo];
-          const el = [...document.querySelectorAll('.promotion-piece, promotion-choice piece, .promotion-choice piece, #promotion-choice piece')]
-            .find((e) => [...e.classList].some((c) => c === want || c === promo));
-          if (el) { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0, buttons: 1 })); el.click(); }
-        }, 150);
-      }
-      return true;
-    }, { from: '${from}', to: '${to}', promo: '${promo}' });
+      const arc = (a, b) => {
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+        const nx = -dy / d, ny = dx / d;
+        const bend = (0.10 + Math.random() * 0.24) * d * (Math.random() < 0.5 ? 1 : -1);
+        const cx = (a.x + b.x) / 2 + nx * bend, cy = (a.y + b.y) / 2 + ny * bend;
+        const N = Math.max(12, Math.min(26, Math.round(d / 13)));
+        const pts = [];
+        for (let i = 1; i <= N; i++) {
+          const t = i / N, e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, m = 1 - e;
+          const j = Math.sin(Math.PI * e) * 1.5;
+          pts.push({ x: m * m * a.x + 2 * m * e * cx + e * e * b.x + (Math.random() - 0.5) * j * nx * 2,
+                     y: m * m * a.y + 2 * m * e * cy + e * e * b.y + (Math.random() - 0.5) * j * ny * 2 });
+        }
+        return pts;
+      };
+      const start = last || { x: A.x, y: A.y + 120 };
+      return (async () => {
+        for (const p of arc(start, A)) { send(p, 'pointermove', 0); window.__caPointer = p; await sleep(4 + Math.random() * 9); }
+        await sleep(70 + Math.random() * 170);              // the hover dwell before the grab
+        send(A, 'pointerdown', 1); send(A, 'mousedown', 1);
+        await sleep(40 + Math.random() * 80);
+        for (const p of arc(A, B)) { send(p, 'pointermove', 1); window.__caPointer = p; await sleep(4 + Math.random() * 9); }
+        send(B, 'pointermove', 1);
+        await sleep(25 + Math.random() * 60);
+        send(B, 'pointerup', 0); send(B, 'mouseup', 0); send(B, 'click', 0);
+        const rest = { x: B.x + (Math.random() - 0.5) * 40, y: B.y + (Math.random() - 0.5) * 40 };
+        for (const p of arc(B, rest)) { send(p, 'pointermove', 0); window.__caPointer = p; await sleep(4 + Math.random() * 8); }
+        window.__caPointer = rest;
+        if (promo) {
+          const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+          setTimeout(() => {
+            const want = names[promo];
+            const el = [...document.querySelectorAll('.promotion-piece, promotion-choice piece, .promotion-choice piece, #promotion-choice piece')]
+              .find((e) => [...e.classList].some((c) => c === want || c === promo));
+            if (el) { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0, buttons: 1 })); el.click(); }
+          }, 150);
+        }
+        return true;
+      })();
+    }, { from: ${JSON.stringify(q.from)}, to: ${JSON.stringify(q.to)}, promo: '${promo}', last: ${JSON.stringify(q.last)} });
     return true;
-  }`);
+  }`)]);
 }
 
 // Waits until the move count passes `plies` (the opponent moved) or the game ends; returns the new state.
@@ -175,6 +253,7 @@ async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves
   let state = await chessState();
   const me: 'w' | 'b' = state.flipped ? 'b' : 'w';
   while (!state.over && moves.length < maxMoves) {
+    await dismissGate(); // the fair-play sheet, if the site shows one: the account and the game are the user's
     if (state.turn !== me) { state = await waitForMove(state.plies); continue; }
     let fen = state.fen;
     let played = false;
@@ -186,7 +265,7 @@ async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves
       if (!r.bestmove) break;
       if (maxDelayMs > minDelayMs) await sleep(minDelayMs + Math.random() * (maxDelayMs - minDelayMs));
       const before = state.plies;
-      await playMove(r.bestmove, { real: attempt > 0 });
+      await playMove(r.bestmove, { real: attempt > 0, color: me });
       const after = await waitForMove(before, 6000);
       if (after.plies > before) { moves.push(r.bestmove); state = after; played = true; break; }
       state = after;

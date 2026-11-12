@@ -21,7 +21,7 @@
     @keyframes spin { to { --chromiagent-a: 360deg; } }
 
     .cursor { position:fixed; left:0; top:0; width:26px; height:26px; opacity:0;
-      transition: transform var(--t, 0ms) cubic-bezier(.22,.9,.24,1), opacity .25s ease;
+      transition: opacity .25s ease;
       animation: spin 2.6s linear infinite, halo 1.6s ease-in-out infinite; will-change: transform; }
     .cursor.on { opacity:1; }
     .cursor .fill { position:absolute; inset:0; background:${LOGO}; -webkit-mask:${svgMask(ARROW)}; mask:${svgMask(ARROW)}; }
@@ -116,26 +116,106 @@
 
   const place = (x, y) => { cursor.style.transform = `translate(${x - 3}px, ${y - 1.5}px)`; };
 
-  // Glide to (x, y); resolves when the pointer has arrived, so the action happens under it.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Glide to (x, y) along a human arc — a wide bezier bend, a bit of noise that fades at the ends, a
+  // per-move randomized duration, and sometimes a small overshoot that gets corrected, the way a hand
+  // approaches a target. Resolves when the pointer has arrived, so the action happens under it.
   function move(x, y, label, from) {
     mount();
     guard(true);
     tag.textContent = label || 'Chromiagent';
     const start = pos || from || { x: innerWidth * 0.62, y: innerHeight * 0.72 };
     if (!cursor.classList.contains('on')) {
-      cursor.style.setProperty('--t', '0ms');
       place(start.x, start.y);
       cursor.getBoundingClientRect(); // commit the start point before animating
       cursor.classList.add('on');
     }
-    const dist = Math.hypot(x - start.x, y - start.y);
+    const dx = x - start.x, dy = y - start.y, dist = Math.hypot(dx, dy) || 1;
     // A hidden tab neither animates nor runs timers on time, so the pointer just jumps there.
-    const ms = dist < 3 || document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches ? 0
-      : Math.round(Math.min(300, Math.max(80, dist * 0.45)));
-    cursor.style.setProperty('--t', `${ms}ms`);
-    place(x, y);
-    pos = { x, y };
-    return new Promise((r) => setTimeout(() => r(pos), ms + 30));
+    if (dist < 3 || document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      place(x, y);
+      pos = { x, y };
+      return Promise.resolve(pos);
+    }
+    const dur = Math.round(Math.min(720, Math.max(170, dist * 0.55)) * (0.85 + Math.random() * 0.35));
+    const overshoot = dist > 110 && Math.random() < 0.35;
+    const nx = -dy / dist, ny = dx / dist;
+    const bend = (0.10 + Math.random() * 0.26) * dist * (Math.random() < 0.5 ? 1 : -1);
+    const cx = (start.x + x) / 2 + nx * bend, cy = (start.y + y) / 2 + ny * bend;
+    const over = overshoot ? 5 + Math.random() * 7 : 0;
+    const ax = x + (dx / dist) * over, ay = y + (dy / dist) * over; // the approach passes the target a little
+    const t0 = performance.now();
+    return new Promise((resolve) => {
+      const step = () => {
+        const t = Math.min(1, (performance.now() - t0) / dur);
+        const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // cubic ease in-out
+        const m = 1 - e;
+        const jitter = Math.sin(Math.PI * e) * 1.7; // noise that fades at both ends
+        const px = m * m * start.x + 2 * m * e * cx + e * e * ax + (Math.random() - 0.5) * jitter * nx * 2;
+        const py = m * m * start.y + 2 * m * e * cy + e * e * ay + (Math.random() - 0.5) * jitter * ny * 2;
+        place(px, py);
+        if (t < 1) { requestAnimationFrame(step); return; }
+        if (!overshoot) { pos = { x, y }; resolve(pos); return; }
+        // Correct the overshoot in a short second glide — the "oops, just there" hand.
+        const s2 = performance.now(), d2 = 90 + Math.random() * 80, sx = ax, sy = ay;
+        const fix = () => {
+          const t2 = Math.min(1, (performance.now() - s2) / d2);
+          const e2 = 1 - Math.pow(1 - t2, 2);
+          place(sx + (x - sx) * e2, sy + (y - sy) * e2);
+          if (t2 < 1) requestAnimationFrame(fix);
+          else { pos = { x, y }; resolve(pos); }
+        };
+        requestAnimationFrame(fix);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Centers of the pieces of one color, for the pre-move "scan" of a human player.
+  function pieceCenters(color) {
+    const out = [];
+    for (const el of document.querySelectorAll('.piece, piece')) {
+      const cls = [...el.classList];
+      let c = '';
+      const cc = cls.find((k) => /^[wb][pnbrqk]$/.test(k));
+      if (cc) c = cc[0];
+      else if (cls.includes('white')) c = 'w';
+      else if (cls.includes('black')) c = 'b';
+      if (!c || (color && c !== color)) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width) continue;
+      out.push({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    }
+    return out;
+  }
+
+  // A full human-like move: glance at one friendly piece or two (the scan before committing), glide to
+  // `from`, a short hover dwell, the press, the glide to `to`, the release, and a small settle drift —
+  // all in one call, so a drag (a chess move) reads like one motion of a hand.
+  async function stroke(fromX, fromY, toX, toY, opts = {}) {
+    mount();
+    guard(true);
+    const decoys = Math.min(2, Math.max(0, Number(opts.decoys) || 0));
+    if (decoys > 0) {
+      const pieces = pieceCenters(opts.color).sort(() => Math.random() - 0.5);
+      let used = 0;
+      for (const p of pieces) {
+        if (used >= decoys) break;
+        if (Math.hypot(p.x - fromX, p.y - fromY) < 32) continue; // not the piece we mean to move
+        await move(p.x, p.y, null, null);
+        await wait(140 + Math.random() * 260);
+        used++;
+      }
+    }
+    await move(fromX, fromY, opts.label, null);
+    await wait(70 + Math.random() * 170);
+    press();
+    await wait(45 + Math.random() * 90);
+    await move(toX, toY, opts.label, { x: fromX, y: fromY });
+    press();
+    await move(toX + (Math.random() - 0.5) * 40, toY + (Math.random() - 0.5) * 40, null, { x: toX, y: toY }); // the hand rests near the board
+    return pos;
   }
 
   function press() {
@@ -330,5 +410,5 @@
     return done;
   }
 
-  globalThis.__chromiagentUI = { move, press, idle, ask, pass };
+  globalThis.__chromiagentUI = { move, press, stroke, idle, ask, pass };
 })();

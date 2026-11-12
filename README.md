@@ -123,7 +123,7 @@ const r = await observe(tabId, async (events) => {
 
 ### Chess at engine speed
 
-Stockfish 19 Lite (WASM, GPL-3, in `host/engine/`) is built in. Against a computer bot, in analysis or puzzles on chess.com and lichess, the agent runs one code mode script, `playGame()` from `host/chess.ts`: it reads the board from the page's HTML (no screenshots), asks the engine, plays the move and waits for the reply, about 3 seconds a move instead of minutes. The same call plays live games against people: pass `minDelayMs` / `maxDelayMs` and the engine answers each of your turns at a human pace while the opponent's clock runs.
+Stockfish 19 Lite (WASM, GPL-3, in `host/engine/`) is built in. Against a computer bot, in analysis or puzzles on chess.com and lichess, the agent runs one code mode script, `playGame()` from `host/chess.ts`: it reads the board from the page's HTML (no screenshots), asks the engine, plays the move and waits for the reply, about 3 seconds a move instead of minutes. The same call plays live games against people — bots, friends or rated matchmaking: pass `minDelayMs` / `maxDelayMs` and the engine answers each of your turns at a human pace while the opponent's clock runs. If the site shows a fair-play agreement (chess.com shows one before rated games), the agent presses agree and plays: the account, the games and the consequences are yours. Moves land as one motion of a hand, not a script's teleport: the pointer takes a curved path with a slight tremor, glances at another friendly piece first (the human pre-move scan), dwells over the square, drags along an arc, and comes to rest near the board.
 
 ### It watches, like a video
 
@@ -252,7 +252,7 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 
 **Saytni uzluksiz kuzatish:** `monitor` sahifaga yozib boruvchi skript qo'yadi, u sahifadagi hamma narsani qayd etadi: DOM o'zgarishlari, tarmoq so'rovlari, WebSocket, konsol xatolari, sahifa manzili, sizning harakatlaringiz. Code mode'da agent `observe()` bilan 30 daqiqagacha to'xtovsiz kuzatadi, voqealarni kelishi bilan tahlil qiladi va darhol harakat qiladi.
 
-**Shaxmat:** Stockfish dvigateli qo'shildi. Botga qarshi, tahlil va masalalarda agent taxtani HTML'dan o'qiydi, dvigateldan so'raydi va yuradi. Bir yurish 3 soniyaga yaqin vaqt oladi. Tirik odamlarga qarshi ishlatilmaydi.
+**Shaxmat:** Stockfish dvigateli qo'shildi. Botga qarshi, tahlil va masalalarda agent taxtani HTML'dan o'qiydi, dvigateldan so'raydi va yuradi. Bir yurish 3 soniyaga yaqin vaqt oladi. Tirik odamlarga — reytingli o'yinlar ham — qarshi o'ynashi mumkin: sayt qoidalar oynasini ko'rsatsa (masalan chess.com'dagi fair-play rozilik oynasi), "roziman" tugmasini bosib davom etadi. Yurishlar odam kabi ko'rinadi: kursor titroq bilan egri chiziq bo'ylab boradi, avval boshqa donalarga ko'z tashlaydi, maydon ustida to'xtab, egri chiziq bo'ylab sudrab qo'yadi va chekkaga borib tinchib qoladi — teleport emas.
 
 **Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 

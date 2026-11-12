@@ -35,6 +35,13 @@ const TOOLS = [
       placeholder: { type: 'string' },
       ref: { type: 'number', description: 'Field from read_page that the user fills in themselves' },
       selector: { type: 'string', description: 'CSS selector of that field (alternative to ref)' } }, ['question']],
+  ['pointer_stroke', 'Move the agent\'s pointer like a human hand: it glances at up to `decoys` friendly pieces (the pre-move scan), glides to `from`, hovers with a dwell, presses, glides to `to`, releases, and rests nearby. Use it for drags and for chess moves — a move then reads like one motion, not a jump. from/to are viewport CSS pixels. In code mode: chrome.pointer_stroke({ from, to, decoys, color }).',
+    { ...TAB,
+      from: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] },
+      to: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] },
+      decoys: { type: 'number', description: 'How many friendly pieces to glance at first (0-2, default 0)' },
+      color: { type: 'string', description: 'Which side is yours for the scan: w or b' },
+      label: { type: 'string', description: 'Name tag on the pointer (default: Chromiagent)' } }, ['from', 'to']],
 ].map(([name, description, properties, required]) => ({ name, description, inputSchema: { type: 'object', properties, required } }));
 
 let ws = null;
