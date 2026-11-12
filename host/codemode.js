@@ -121,10 +121,34 @@ const asText = (r) => {
 // observe() and untilEvent() (host/observe.ts) are available inside every script.
 const LIBRARY = ['observe.ts', 'chess.ts'].map((f) => fs.readFileSync(path.join(__dirname, f), 'utf8')).join('\n');
 
+// Turn a bare syntax error into something the model can fix in one shot: the line number and the line
+// itself. TypeScript strips silently on some bad input but Function's stack carries it for real parses.
+const locFromStack = (stack) => { const m = String(stack || '').match(/<anonymous[^>]*>:(\d+)/); return m ? Number(m[1]) : null; };
+function diagnose(source, err) {
+  const msg = String((err && err.message) || err);
+  const lineNo = locFromStack(err && err.stack) || locFromStack(msg);
+  if (lineNo == null) return msg;
+  const line = (source.split('\n')[lineNo - 1] || '').trim();
+  return `${msg}\n→ line ${lineNo} (the line to fix): ${line.slice(0, 240)}`;
+}
+
 // The script runs in a fresh, permission-restricted process; its tool calls come back here over IPC.
 function runTypeScript(code, timeoutSec = 300) {
   const limit = Math.min(Math.max(timeoutSec, 10), 1800);
-  const js = stripTypeScriptTypes(`async function __main(chrome, playwright, engine, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
+  // Parse the script twice: once to fail loudly with the offending line, once inside the runner.
+  // Returning the diagnosis straight to the agent beats failing blind with "Expected ',', got ';'".
+  let js;
+  try {
+    js = stripTypeScriptTypes(`async function __main(chrome, playwright, engine, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
+  } catch (e) {
+    return Promise.reject(new Error(`your code did not parse as TypeScript: ${diagnose(String(code), e)}\nFix that line and try again. Keep it simple: no decorators, no angle-bracket casts, balanced quotes and backticks.`));
+  }
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(`${js}\nreturn __main;`)();
+  } catch (e) {
+    return Promise.reject(new Error(`syntax error in your script: ${diagnose(js, e)}\nFix that line and try again. Keep it simple: balanced quotes and backticks, no unmatched parentheses.`));
+  }
   playwrightBusy();
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'runner.js'), [], {
