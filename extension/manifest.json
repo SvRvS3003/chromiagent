@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromiagent",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "description": "Agent side panel for Chromium browsers: a real terminal and an AI agent that sees and drives every open tab.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkROgmPIpGcBDga6D1hRzWCwFAQfKSSEirZVFmD+MImaMTyoh7Ig7tCxhDVZC7T1waiBe+z732uOBFxtstBBiKVacSVrax2cXGZ5iLuY+awSF7I7r/6v0DhBmeBXBdlvsqeNL0XgMm9dgc5ln5Axj/RBkSkHUc1H9OlKm1+Bb20qXNI+vQC/9i4L8dU7JySKIJtlXfdBdu3KuiMY1pmUMMPFlPWDCvDUi83LEaeNNOz9P/Xkxs+Q08JL4ajn18pcvxGu+dBvIN33ZWL4daKSKm/ediimHDWjC6T+qZj0WARC4WX0MCpkTPGSfDj5gkDXQoPq0N+oV68qYOVrevY1gXwIDAQAB",
   "permissions": [

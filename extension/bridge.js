@@ -142,16 +142,9 @@ async function tabArg(args = {}) {
 
 const tools = {
   async list_tabs() {
+    const mine = await mineSet();
     const tabs = await chrome.tabs.query({});
-    const groups = new Map();
-    for (const t of tabs) {
-      if (t.groupId == null || t.groupId < 0 || groups.has(t.groupId)) continue;
-      groups.set(t.groupId, await chrome.tabGroups.get(t.groupId).catch(() => null));
-    }
-    return tabs.map((t) => {
-      const group = t.groupId != null && t.groupId >= 0 ? groups.get(t.groupId) : null;
-      return { tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: group?.title === 'Chromiagent' || undefined, bound: t.id === boundTab || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined };
-    });
+    return tabs.map((t) => ({ tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: mine.has(t.id) || undefined, bound: t.id === boundTab || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined }));
   },
   async bind_tab({ tabId }) {
     const t = await chrome.tabs.get(tabId);
@@ -165,8 +158,8 @@ const tools = {
   },
   async open_tab({ url, active = false }) {
     noFile(url);
-    const t = await chrome.tabs.create({ url, active });
-    await intoAgentGroup(t);
+    const t = await chrome.tabs.create({ url, active }); // a normal background tab, no markings
+    await markMine(t.id);
     await setBound(t.id);
     return { tabId: t.id, windowId: t.windowId, bound: true };
   },
@@ -328,15 +321,28 @@ const tools = {
   },
 };
 
-// Tabs the agent opens live in their own green "Chromiagent" group, apart from the user's tabs.
-async function intoAgentGroup(tab) {
-  if (!chrome.tabGroups) return; // extension not reloaded since the permission was added
-  try {
-    const [group] = await chrome.tabGroups.query({ windowId: tab.windowId, title: 'Chromiagent' });
-    const groupId = await chrome.tabs.group({ tabIds: [tab.id], ...(group ? { groupId: group.id } : { createProperties: { windowId: tab.windowId } }) });
-    if (!group) await chrome.tabGroups.update(groupId, { title: 'Chromiagent', color: 'green', collapsed: false });
-  } catch {} // a popup window or a browser without tab groups
+// Tabs the agent opens itself, recorded so list_tabs can mark them — no groups, no visible markings.
+const mineKey = 'ca_mine';
+async function mineSet() {
+  try { return new Set((await chrome.storage.session.get(mineKey))[mineKey] || []); } catch { return new Set(); }
 }
+async function markMine(id) {
+  try { const a = (await chrome.storage.session.get(mineKey))[mineKey] || []; await chrome.storage.session.set({ [mineKey]: [...new Set([...a, id])].slice(-300) }); } catch {}
+}
+async function unmarkMine(id) {
+  try { const a = (await chrome.storage.session.get(mineKey))[mineKey] || []; await chrome.storage.session.set({ [mineKey]: a.filter((x) => x !== id) }); } catch {}
+}
+chrome.tabs.onRemoved.addListener((id) => { unmarkMine(id); });
+// One-time cleanup of the green "Chromiagent" group (1.12–1.14): those tabs become ordinary tabs.
+(async () => {
+  try {
+    if (!chrome.tabGroups) return;
+    for (const g of await chrome.tabGroups.query({ title: 'Chromiagent' })) {
+      const tabs = await chrome.tabs.query({ groupId: g.id });
+      if (tabs.length) await chrome.tabs.ungroup(tabs.map((t) => t.id));
+    }
+  } catch {}
+})();
 
 // A tab the user can see right now: the selected tab of the focused, not minimized window.
 async function inView(tab) {
@@ -345,18 +351,25 @@ async function inView(tab) {
 }
 
 // Frames of a tab. A tab the user sees (window focused, not minimized) is captured as shown, with no
-// debugger and no bar. A background tab cannot be captured without the debugger, which Chromiagent never
-// attaches — so the caller gets a clear error instead: make the tab visible, or follow it with monitor/events.
+// debugger. A background tab renders off screen only through the debugger: it is attached for the
+// capture and detached right away, so the debug bar shows only while the capture runs.
 async function frameSource(tabId) {
   const tab = await chrome.tabs.get(tabId);
   noFile(tab.url);
+  // The agent's own glow and pointer are hidden meanwhile: they would show up as changes in every frame.
   const overlays = (shown) => chrome.scripting.executeScript({ target: { tabId }, args: [shown],
     func: (v) => ['__chromiagent-glow', '__chromiagent-ui'].forEach((id) => { const e = document.getElementById(id); if (e) e.style.visibility = v ? '' : 'hidden'; }) }).catch(() => {});
+  await overlays(false);
   if (await inView(tab)) {
-    await overlays(false);
     return { grab: () => chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 }), done: () => overlays(true) };
   }
-  throw new Error('that tab is not in view (a background tab). Bring it to view for a screenshot or watch, or follow it without pictures with monitor/events — Chromiagent never attaches the debugger for the everyday path');
+  const target = { tabId };
+  const own = !cdp.attachedTabs.has(tabId);
+  if (own) await chrome.debugger.attach(target, '1.3');
+  return {
+    grab: async () => `data:image/jpeg;base64,${(await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 55 })).data}`,
+    done: async () => { if (own) await chrome.debugger.detach(target).catch(() => {}); await overlays(true); },
+  };
 }
 
 // A "?" on the toolbar icon while the agent waits for the user, so it shows in every window.

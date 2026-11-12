@@ -104,7 +104,7 @@ While the agent works on a page, only its pointer acts there: your mouse clicks 
 
 ### It works in the background, in its own tabs
 
-The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts and games all run there. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
+The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts and games all run there. Tabs it opens itself are ordinary background tabs, indistinguishable from yours — nothing marked, nothing grouped — so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
 
 ### It follows everything that happens on a site
 
@@ -249,7 +249,7 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 
 **Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
 
-**Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar fonda, yashil "Chromiagent" guruhida ochiladi, shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
+**Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar oddiy fon tablari bo'lib ochiladi — hech qanday belgi yoki guruh yo'q, sizniki bilan bir xil — shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
 
 **Saytni uzluksiz kuzatish:** `monitor` sahifaga yozib boruvchi skript qo'yadi, u sahifadagi hamma narsani qayd etadi: DOM o'zgarishlari, tarmoq so'rovlari, WebSocket, konsol xatolari, sahifa manzili, sizning harakatlaringiz. Code mode'da agent `observe()` bilan 30 daqiqagacha to'xtovsiz kuzatadi, voqealarni kelishi bilan tahlil qiladi va darhol harakat qiladi.
 
