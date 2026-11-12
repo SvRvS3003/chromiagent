@@ -70,11 +70,21 @@ Pick the agent in the panel header. Every installed CLI gets the same browser to
 
 | CLI | How it gets the browser tools | Kept inside the browser |
 |---|---|---|
-| Claude Code | `--mcp-config` + `--append-system-prompt-file` | built-in shell and file tools switched off |
-| opencode | `opencode.json` + `AGENTS.md` | a `chromiagent` agent that denies shell, read, edit, glob, grep, list |
-| Codex | `-c mcp_servers…` + `AGENTS.md` | shell sandboxed read-only |
+| Claude Code | `--mcp-config` + `--append-system-prompt-file` | built-in shell and file tools off, no other MCP servers, no Claude in Chrome |
+| opencode / opencode 2 | `opencode.json` + `AGENTS.md` | a `chromiagent` agent that denies shell, read, edit, glob, grep, list |
+| Codex | `-c mcp_servers…` + `AGENTS.md` | shell sandboxed read-only, your global Codex MCP servers off |
 | Qwen Code / Gemini CLI | `.qwen` / `.gemini` `settings.json` + `AGENTS.md` | shell and file tools excluded |
+| Grok | `.grok/config.toml` (`--trust`) + `AGENTS.md` | terminal and file tools removed; Claude, Cursor and managed MCP imports off |
+| pi | `.pi/mcp.json` (`--approve`) + `--append-system-prompt` | `--no-builtin-tools` |
+| Kiro | `.kiro/agents/chromiagent.json` | an agent with only the browser tools |
+| Cline | its own settings folder with only the browser tools (your sign-in is linked) | AGENTS.md / `.clinerules` |
+| Freebuff / Codebuff | `.agents/mcp.json` + `AGENTS.md` | AGENTS.md |
+| Kimi Code | `.kimi-code/mcp.json` + `AGENTS.md` | AGENTS.md |
+| Copilot CLI · Cursor · Crush · Droid · Amp · Auggie · Goose · Kilo Code | each one's own project MCP file (`.mcp.json`, `.cursor/`, `crush.json`, `.factory/`, `.amp/`, `--mcp-config`, `--with-extension`, `.kilocode/`) | AGENTS.md (Copilot: shell and write denied) |
+| Other CLI… | type any command: it starts in the same workspace, which has `.mcp.json`, `AGENTS.md`, `CLAUDE.md` and the files above | AGENTS.md |
 | Shell | — | a plain terminal in your home folder |
+
+The workspace is its own git root, so CLIs that look for the project root stay in it instead of your files. Only the CLIs installed on your computer appear in the list.
 
 Codex asks once whether to trust the folder, and Qwen Code asks once to approve the two MCP servers: answer yes the first time. The terminal renders with WebGL and Unicode 11, so full-screen TUIs like opencode and Codex stay fast and draw correctly.
 
@@ -246,6 +256,8 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 
 **Akkauntlar:** agent kirish, ro'yxatdan o'tish va parolni tiklash sahifalarini topib, email yoki loginni to'ldiradi. Parol va tasdiqlash kodlarini esa sahifadagi maydonga o'zingiz yozasiz, agent ularni ko'rmaydi.
+
+**Har qanday CLI:** Claude Code, opencode, Codex, Qwen, Gemini, Grok, pi, Kiro, Cline, Freebuff, Kimi, Copilot, Cursor, Crush, Droid, Amp, Auggie, Goose, Kilo Code, hamda "Other CLI…" orqali istalgan boshqa buyruq. Ularning hammasi bir xil brauzer asboblarini oladi.
 
 **Sessiya:** panelni yopib qayta ochsangiz, sessiya davom etadi. `+` yangi sessiya ochadi, `✕` sessiyani tugatadi.
 

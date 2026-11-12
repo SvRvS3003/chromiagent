@@ -27,7 +27,7 @@ async function startSession(fresh = false) {
 
   const ws = new WebSocket(HOST);
   const send = (m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
-  ws.onopen = () => send({ type: 'start', agent: $('agent').value, panel, fresh, cols: term.cols, rows: term.rows });
+  ws.onopen = () => send({ type: 'start', agent: $('agent').value, command: $('agent').value === 'custom' ? savedCustom() : undefined, panel, fresh, cols: term.cols, rows: term.rows });
   ws.onmessage = (e) => term.write(e.data);
   ws.onclose = (e) => term.write(e.wasClean
     ? '\r\n\x1b[90m[session ended - press + for a new terminal]\x1b[0m\r\n'
@@ -87,13 +87,25 @@ chrome.runtime.onMessage.addListener(async (msg, sender) => {
 });
 
 // ---- agent picker: any installed CLI (Claude Code, opencode, Codex, Qwen, Gemini) or a plain shell ----
-const AGENT_NAMES = { claude: 'Claude Code', opencode: 'opencode', codex: 'Codex', qwen: 'Qwen Code', gemini: 'Gemini CLI', shell: 'Shell' };
+const AGENT_NAMES = { claude: 'Claude Code', opencode: 'opencode', opencode2: 'opencode 2', codex: 'Codex', qwen: 'Qwen Code', gemini: 'Gemini CLI',
+  pi: 'pi', 'kiro-cli': 'Kiro', freebuff: 'Freebuff', codebuff: 'Codebuff', cline: 'Cline', kimi: 'Kimi Code', grok: 'Grok', copilot: 'Copilot CLI',
+  'cursor-agent': 'Cursor', crush: 'Crush', droid: 'Droid', amp: 'Amp', auggie: 'Auggie', goose: 'Goose', kilocode: 'Kilo Code', shell: 'Shell', custom: 'Other CLI…' };
+const savedCustom = () => { try { return localStorage.getItem('chromiagent.custom') || ''; } catch { return ''; } };
 const savedAgent = () => { try { return localStorage.getItem('chromiagent.agent'); } catch { return null; } };
 function fillAgents(list) {
   const pick = list.includes(savedAgent()) ? savedAgent() : list[0];
-  $('agent').replaceChildren(...list.map((a) => new Option(AGENT_NAMES[a] || a, a, false, a === pick)));
+  const all = [...list, 'custom'];
+  const chosen = all.includes(savedAgent()) ? savedAgent() : pick;
+  $('agent').replaceChildren(...all.map((a) => new Option(a === 'custom' && savedCustom() ? `Other: ${savedCustom().split(' ')[0]}` : AGENT_NAMES[a] || a, a, false, a === chosen)));
 }
-$('agent').onchange = () => {
+$('agent').onchange = async () => {
+  // Any other CLI: its command runs in the same workspace, where the browser tools are already set up.
+  if ($('agent').value === 'custom') {
+    const r = await panelAsk({ question: 'Command that starts your CLI (it runs in the Chromiagent workspace, with the browser tools configured):', placeholder: savedCustom() || 'e.g. aider, goose session, my-agent --flag' });
+    if (r.type !== 'text') { $('agent').value = savedAgent() || 'claude'; return; }
+    try { localStorage.setItem('chromiagent.custom', r.value); } catch {}
+    $('agent').selectedOptions[0].text = `Other: ${r.value.split(' ')[0]}`;
+  }
   try { localStorage.setItem('chromiagent.agent', $('agent').value); } catch {}
   startSession(true); // a different CLI means a new session
 };

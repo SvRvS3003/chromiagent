@@ -19,8 +19,9 @@ const WIN = process.platform === 'win32';
 
 // ---------- agent CLIs ----------
 // Any CLI started from the panel works in host/workspace: it finds the Chrome tools and the
-// instructions there through the files each CLI already reads (AGENTS.md, opencode.json,
-// .qwen/.gemini settings), so every agent drives the browser the same way.
+// instructions there through the files each CLI already reads from its project folder (AGENTS.md,
+// .mcp.json, opencode.json, .qwen/.gemini/.grok/.pi/.kimi-code/.kiro/.cursor/... settings), so every
+// agent drives the browser the same way, and a CLI not listed here still finds them.
 const WORKSPACE = path.join(__dirname, 'workspace');
 const PROMPT = path.join(__dirname, 'agent-prompt.md');
 const MCP_SERVERS = {
@@ -58,11 +59,48 @@ function writeWorkspace() {
   };
   write('.qwen/settings.json', geminiStyle);
   write('.gemini/settings.json', geminiStyle);
+
+  // The common project formats: { mcpServers } in each CLI's own place.
+  const plain = { mcpServers: MCP_SERVERS };
+  for (const f of ['.mcp.json', '.agents/mcp.json', '.pi/mcp.json', '.kimi-code/mcp.json', '.kiro/settings/mcp.json',
+    '.cursor/mcp.json', '.factory/mcp.json', '.kilocode/mcp.json', '.roo/mcp.json']) write(f, plain);
+  write('.amp/settings.json', { 'amp.mcpServers': MCP_SERVERS });
+  write('crush.json', { $schema: 'https://charm.land/crush.json', mcp: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { type: 'stdio', ...v, timeout: 1900 }])) });
+  write('.vscode/mcp.json', { servers: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { type: 'stdio', ...v }])) });
+  write('.grok/config.toml', Object.entries(MCP_SERVERS).map(([k, v]) => `[mcp_servers.${k}]\ncommand = ${JSON.stringify(v.command)}\nargs = ${JSON.stringify(v.args)}\nenabled = true\n`).join('\n'));
+  // Kiro: an agent that has only the browser tools.
+  write('.kiro/agents/chromiagent.json', { name: 'chromiagent', description: 'Chromiagent: works only inside the browser', prompt,
+    mcpServers: MCP_SERVERS, includeMcpJson: false, tools: ['@chrome', '@codemode'], allowedTools: ['@chrome', '@codemode'] });
+  // Instructions under the names other CLIs look for.
+  for (const f of ['CLAUDE.md', 'knowledge.md', '.goosehints', '.clinerules/chromiagent.md', '.kiro/steering/chromiagent.md', '.cursor/rules/chromiagent.md']) write(f, prompt);
+  writeClineConfig();
+  // Its own git root: CLIs that look for the project root (or offer to switch to it) stop at the workspace.
+  if (!fs.existsSync(path.join(WORKSPACE, '.git'))) { try { require('child_process').execFileSync('git', ['init', '-q'], { cwd: WORKSPACE, stdio: 'ignore' }); } catch {} }
+}
+
+// Cline keeps MCP servers only in its global settings (which may hold desktop or file tools). It gets its
+// own settings folder with just the browser tools; the user's sign-in and model are linked in from ~/.cline.
+const CLINE_DIR = path.join(WORKSPACE, '.cline-config');
+function writeClineConfig() {
+  const home = path.join(os.homedir(), '.cline');
+  fs.mkdirSync(path.join(CLINE_DIR, 'data', 'settings'), { recursive: true });
+  for (const f of ['data/secrets.json', 'data/globalState.json', 'data/settings/providers.json', 'data/settings/global-settings.json']) {
+    const from = path.join(home, f), to = path.join(CLINE_DIR, f);
+    if (!fs.existsSync(from)) continue;
+    try { fs.rmSync(to, { force: true }); fs.symlinkSync(from, to); } catch { try { fs.copyFileSync(from, to); } catch {} } // Windows without symlink rights
+  }
+  fs.writeFileSync(path.join(CLINE_DIR, 'data', 'settings', 'cline_mcp_settings.json'), JSON.stringify({
+    mcpServers: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { transport: { type: 'stdio', ...v } }])),
+  }, null, 2));
 }
 writeWorkspace();
 
 // Typed into the user's own shell, so their aliases and functions (e.g. a `claude` wrapper) still apply.
 const q = (s) => (WIN ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`);
+const withEnv = (vars, cmd) => Object.entries(vars).map(([k, v]) => (WIN ? `set ${k}=${v}&& ` : `${k}=${v} `)).join('') + cmd;
+// MCP servers the user set up globally for a CLI (a Node REPL, desktop control, another browser) stay off in the panel.
+const globalTomlServers = (file) => { try { return [...fs.readFileSync(file, 'utf8').matchAll(/^\[mcp_servers\.([A-Za-z0-9_-]+)\]/gm)].map((m) => m[1]); } catch { return []; } };
+const codexOff = globalTomlServers(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml')).filter((n) => !MCP_SERVERS[n]);
 const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`, `mcp_servers.${name}.tool_timeout_sec=1900`];
 const AGENTS = {
   // Browser-only: Claude Code's built-in shell/file tools are off and no other MCP servers load.
@@ -70,9 +108,26 @@ const AGENTS = {
   claude: `claude --tools ${WIN ? '""' : "''"} --no-chrome --strict-mcp-config --mcp-config ${q(MCP_CONFIG)} --append-system-prompt-file ${q(PROMPT)}`,
   opencode: 'opencode',
   // Codex reads AGENTS.md from the folder; its own shell stays read-only.
-  codex: `codex --sandbox read-only ${Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)).map((a) => `-c ${q(a)}`).join(' ')}`,
+  codex: `codex --sandbox read-only ${[...Object.entries(MCP_SERVERS).flatMap(([k, v]) => tomlArgs(k, v)), ...codexOff.map((n) => `mcp_servers.${n}.enabled=false`)].map((a) => `-c ${q(a)}`).join(' ')}`,
   qwen: 'qwen',
   gemini: 'gemini',
+  // Built-in file and shell tools off where the CLI allows it; the others are told by AGENTS.md.
+  pi: `pi --approve --no-builtin-tools --append-system-prompt ${q(PROMPT)}`,
+  'kiro-cli': 'kiro-cli chat --agent chromiagent',
+  freebuff: withEnv({ CODEBUFF_TRUST_AGENT_DIRS: 1 }, 'freebuff'),
+  codebuff: withEnv({ CODEBUFF_TRUST_AGENT_DIRS: 1 }, 'codebuff'),
+  cline: `cline --config ${q(CLINE_DIR)}`,
+  kimi: withEnv({ KIMI_CODE_TRUST_WORKSPACE: 1 }, 'kimi'),
+  grok: withEnv({ GROK_CLAUDE_MCPS_ENABLED: 'false', GROK_CURSOR_MCPS_ENABLED: 'false', GROK_MANAGED_MCPS_ENABLED: 'false' }, 'grok --trust --disallowed-tools run_terminal_command,read_file,search_replace,list_dir,grep,write,kill_command_or_subagent,get_command_or_subagent_output'),
+  opencode2: 'opencode2',
+  copilot: `copilot --additional-mcp-config ${q('@' + path.join(WORKSPACE, '.mcp.json'))} --deny-tool shell --deny-tool write`,
+  'cursor-agent': 'cursor-agent',
+  crush: 'crush',
+  droid: 'droid',
+  amp: 'amp',
+  auggie: `auggie --mcp-config ${q(path.join(WORKSPACE, '.mcp.json'))}`,
+  goose: `goose session ${Object.values(MCP_SERVERS).map((v) => `--with-extension ${q([v.command, ...v.args].join(' '))}`).join(' ')}`,
+  kilocode: 'kilocode',
   shell: '',
 };
 
@@ -181,8 +236,9 @@ const REPLAY_BYTES = 512 * 1024;
 
 function spawnSession(panel, msg) {
   // `agent: true` is what panels from 1.3 and earlier send.
-  const agent = msg.agent === true ? 'claude' : (Object.hasOwn(AGENTS, msg.agent) ? msg.agent : 'shell');
-  const term = pty.spawn(USER_SHELL, shellArgs(AGENTS[agent]), {
+  const custom = msg.agent === 'custom' && typeof msg.command === 'string' && msg.command.trim() ? msg.command.trim().slice(0, 500) : null;
+  const agent = custom ? 'custom' : msg.agent === true ? 'claude' : (Object.hasOwn(AGENTS, msg.agent) ? msg.agent : 'shell');
+  const term = pty.spawn(USER_SHELL, shellArgs(custom || AGENTS[agent]), {
     name: 'xterm-256color',
     cols: msg.cols || 80,
     rows: msg.rows || 24,
