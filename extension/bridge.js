@@ -69,23 +69,9 @@ function pageAct(action, ref, selector, text, submit, dy) {
   return 'typed';
 }
 
-// ---- chrome.debugger helpers (real input, CSP-free eval) ----
-const KEYS = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, PageUp: 33, PageDown: 34, Home: 36, End: 35 };
-
-async function withDebugger(tabId, fn) {
+async function inPage(tabId, func, args, world = 'ISOLATED') {
   noFile((await chrome.tabs.get(tabId)).url);
-  const target = { tabId };
-  const send = (method, params) => chrome.debugger.sendCommand(target, method, params);
-  // Playwright may already hold this tab; reuse its attachment instead of fighting over it.
-  if (cdp.attachedTabs.has(tabId)) return fn(send);
-  await chrome.debugger.attach(target, '1.3');
-  try { return await fn(send); }
-  finally { await chrome.debugger.detach(target).catch(() => {}); }
-}
-
-async function inPage(tabId, func, args) {
-  noFile((await chrome.tabs.get(tabId)).url);
-  const [r] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+  const [r] = await chrome.scripting.executeScript({ target: { tabId }, func, args, world });
   return r.result;
 }
 
@@ -220,18 +206,28 @@ const tools = {
     const args = [num(from.x), num(from.y), num(to.x), num(to.y), { decoys: Math.min(2, Math.max(0, num(decoys) || 0)), color: color || null, label: label || null }];
     return ui(tabId, 'stroke', ...args);
   },
-  press_key: ({ tabId, key }) => withDebugger(tabId, async (send) => {
-    const code = KEYS[key] ?? key.toUpperCase().charCodeAt(0);
-    const text = key === 'Enter' ? '\r' : key.length === 1 ? key : undefined;
-    await send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', key, windowsVirtualKeyCode: code, text });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode: code });
-    return `pressed ${key}`;
-  }),
-  run_js: ({ tabId, code }) => withDebugger(tabId, async (send) => {
-    const r = await send('Runtime.evaluate', { expression: code, awaitPromise: true, returnByValue: true, userGesture: true, replMode: true }); // replMode: top-level await, like the console
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
-    return r.result.value === undefined ? '(undefined)' : r.result.value;
-  }),
+  press_key: ({ tabId, key }) => inPage(tabId, (k) => {
+    // Synthetic DOM key events: no debugger, no "debugging this browser" bar. Sites that read
+    // key/code/keyCode from handlers get exactly what a browser emits for a key press.
+    const KEYV = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32, ' ': 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, PageUp: 33, PageDown: 34, Home: 36, End: 35 };
+    const code = KEYV[k] ?? (k.length === 1 ? k.toUpperCase().charCodeAt(0) : 0);
+    const codeName = k === ' ' ? 'Space' : k;
+    const target = document.activeElement && document.activeElement !== document.body ? document.activeElement : (document.body || document.documentElement);
+    const init = { key: k === ' ' ? ' ' : k, code: codeName, keyCode: code, which: code, bubbles: true, cancelable: true, composed: true };
+    target.dispatchEvent(new KeyboardEvent('keydown', init));
+    if (k.length === 1) target.dispatchEvent(new KeyboardEvent('keypress', init));
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+    return 'pressed ' + k;
+  }, [key]),
+  run_js: ({ tabId, code }) => inPage(tabId, (src) => {
+    // Runs in the page's main world (page globals visible) and bypasses page CSP — no debugger involved.
+    // Always returns the JSON-encoded value, so scripts get a predictable string.
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    return Promise.resolve()
+      .then(() => new AsyncFn(src)())
+      .then((v) => JSON.stringify(v === undefined ? null : v) ?? 'null')
+      .catch((e) => { throw new Error(String((e && e.message) || e)); });
+  }, [code], 'MAIN'),
   // A question next to the agent's pointer; with ref/selector the user fills that field on the page.
   async ask_user({ tabId, question, options, placeholder, ref, selector }) {
     const { windowId } = await panelReady;
@@ -348,25 +344,19 @@ async function inView(tab) {
   return tab.active && win.focused && win.state !== 'minimized';
 }
 
-// Frames of a tab without switching to it: a tab in view is captured as shown, any other one
-// (a background tab, a window behind others) through the debugger, which renders it off screen.
-// The agent's own glow and pointer are hidden meanwhile: they would show up as changes in every frame.
+// Frames of a tab. A tab the user sees (window focused, not minimized) is captured as shown, with no
+// debugger and no bar. A background tab cannot be captured without the debugger, which Chromiagent never
+// attaches — so the caller gets a clear error instead: make the tab visible, or follow it with monitor/events.
 async function frameSource(tabId) {
   const tab = await chrome.tabs.get(tabId);
   noFile(tab.url);
   const overlays = (shown) => chrome.scripting.executeScript({ target: { tabId }, args: [shown],
     func: (v) => ['__chromiagent-glow', '__chromiagent-ui'].forEach((id) => { const e = document.getElementById(id); if (e) e.style.visibility = v ? '' : 'hidden'; }) }).catch(() => {});
-  await overlays(false);
   if (await inView(tab)) {
+    await overlays(false);
     return { grab: () => chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 }), done: () => overlays(true) };
   }
-  const target = { tabId };
-  const own = !cdp.attachedTabs.has(tabId);
-  if (own) await chrome.debugger.attach(target, '1.3');
-  return {
-    grab: async () => `data:image/jpeg;base64,${(await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 55 })).data}`,
-    done: async () => { if (own) await chrome.debugger.detach(target).catch(() => {}); await overlays(true); },
-  };
+  throw new Error('that tab is not in view (a background tab). Bring it to view for a screenshot or watch, or follow it without pictures with monitor/events — Chromiagent never attaches the debugger for the everyday path');
 }
 
 // A "?" on the toolbar icon while the agent waits for the user, so it shows in every window.

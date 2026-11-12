@@ -1,5 +1,7 @@
 // Chromiagent chess helpers, by SvRvS: read the board from the page's HTML (no screenshots), ask the
-// engine, play the move, wait for the reply, all in one code mode script, so a game moves at engine speed.
+// engine, play the move — CDP-free, node-paced, human-shaped. Every action is a script call into the
+// page (chrome.run_js), so a game runs with no debugger and never shows Chrome's "debugging this
+// browser" bar, from the bound tab, at engine speed, in front of or behind the user's tabs.
 // Works on chess.com and lichess.org boards (play vs computer, live games against people, analysis, puzzles).
 
 interface ChessState {
@@ -12,22 +14,11 @@ interface ChessState {
   over: boolean;            // a game-over dialog is showing
 }
 
-// Runs a Playwright function on the selected tab and returns its value.
-async function pw<T = unknown>(fn: string): Promise<T> {
-  const text = await playwright.browser_run_code_unsafe({ code: fn });
-  const m = text.match(/### Result\n([\s\S]*?)(?:\n###|$)/);
-  if (!m) throw new Error(text.slice(0, 400));
-  return JSON.parse(m[1]) as T;
-}
-
-// Selects the Playwright tab whose URL contains `urlPart` (e.g. 'chess.com/play').
-async function selectTab(urlPart: string): Promise<number> {
-  const list = await playwright.browser_tabs({ action: 'list' });
-  const line = list.split('\n').find((l) => l.includes(urlPart));
-  const index = Number(line?.match(/(\d+):/)?.[1]);
-  if (Number.isNaN(index)) throw new Error(`no tab with "${urlPart}"`);
-  await playwright.browser_tabs({ action: 'select', index });
-  return index;
+// Runs JavaScript in the tab's main world through the extension (no Chrome debugger, no CDP, no bar)
+// and parses the JSON value it returns. `body` runs inside an async function, so `await` works.
+async function evaluate<T = unknown>(body: string): Promise<T> {
+  const out = String(await chrome.run_js({ code: body }));
+  return JSON.parse(out) as T;
 }
 
 // In-page reader, shared by chessState() and waitForMove().
@@ -78,6 +69,11 @@ const READ_BOARD = String.raw`() => {
   return { site, fen: rows.join('/') + ' ' + turn + ' ' + (castling || '-') + ' - 0 ' + (Math.floor(plies / 2) + 1), turn, flipped, plies, live, over };
 }`;
 
+// Dismisses a fair-play / rules agreement shown on a site. Returns the clicked button's label, or null.
+async function dismissGate(): Promise<string | null> {
+  return evaluate('return (' + DISMISS_GATE + ')();');
+}
+
 // The fair-play / rules gate some sites show before a rated game: one sheet, one agree button.
 // The account and the games are the user's; the agreement is theirs to give, so it is clicked.
 const DISMISS_GATE = String.raw`() => {
@@ -94,11 +90,6 @@ const DISMISS_GATE = String.raw`() => {
   }
   return null;
 }`;
-
-// Dismisses a fair-play / rules agreement shown on a site. Returns the clicked button's label, or null.
-async function dismissGate(): Promise<string | null> {
-  return pw<string | null>(`async (page) => page.evaluate(${DISMISS_GATE})`);
-}
 
 interface Pt { x: number; y: number }
 const easeCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -119,20 +110,40 @@ function arcPoints(a: Pt, b: Pt): Pt[] {
   return pts;
 }
 
-// The position on the selected tab.
-async function chessState(): Promise<ChessState> {
-  return pw<ChessState>(`async (page) => page.evaluate(${READ_BOARD})`);
+// Waits, node-side: background tabs throttle page timers to a second, the host is not throttled.
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, Math.round(ms)));
 }
 
-// Plays a UCI move (e2e4, e7e8q). The pointer arcs in like a hand: it glances at a friendly piece or
-// two, glides to the from-square, dwells, presses, drags along a curved path with noise, releases, and
-// rests near the board. With `real: true` the drag goes through Playwright's mouse instead, for a board
-// that ignores synthetic events. The visible pointer is driven through the extension, so what the user
-// sees is one motion, not a teleport.
-async function playMove(uci: string, options: { real?: boolean; color?: 'w' | 'b' } = {}): Promise<void> {
+// One synthetic event inside the page, paced from here. Each is a tiny extension round trip; the
+// sequence lands along a curve instead of teleporting, and background tabs are not throttled.
+async function dispatchAt(p: Pt, type: string, buttons: number): Promise<void> {
+  const x = Number(p.x).toFixed(1), y = Number(p.y).toFixed(1), t = JSON.stringify(type);
+  await chrome.run_js({ code: `const board = document.querySelector('wc-chess-board, chess-board, cg-board') || document.body;
+    const el = document.elementFromPoint(` + x + `, ` + y + `) || board;
+    const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: ` + x + `, clientY: ` + y + `, screenX: ` + x + `, screenY: ` + y + `, button: 0, buttons: ` + buttons + `, isPrimary: true, pointerId: 1, pointerType: 'mouse' };
+    el.dispatchEvent(` + t + `.startsWith('pointer') ? new PointerEvent(` + t + `, o) : new MouseEvent(` + t + `, o));
+    window.__caPointer = { x: ` + x + `, y: ` + y + ` };
+    return true;` });
+}
+
+// The position on the tab this script is bound to (open_tab / bind_tab).
+async function chessState(): Promise<ChessState> {
+  return evaluate('return (' + READ_BOARD + ')();');
+}
+
+// Plays a UCI move (e2e4, e7e8q). The pointer glances at a friendly piece or two, glides in along an
+// arc with a tremor, dwells, presses, arcs to the target with the same tremor, and rests nearby.
+// Moves are synthetic events dispatched node-side, so they land in a background tab and never attach
+// the Chrome debugger. `promo` picks the piece for pawn promotions.
+async function playMove(uci: string, options: { color?: 'w' | 'b' } = {}): Promise<void> {
   const from = uci.slice(0, 2), to = uci.slice(2, 4), promo = uci[4] || '';
-  const q = await pw<{ from: Pt; to: Pt; flipped: boolean; last: Pt | null }>(`async (page) => page.evaluate(() => {
-    document.addEventListener('pointermove', (e) => { window.__caPointer = { x: e.clientX, y: e.clientY }; }, true);
+  const q = await evaluate<{ from: Pt; to: Pt; flipped: boolean; last: Pt | null }>(`
+    if (!window.__caPointerTrack) {
+      window.__caPointerTrack = true;
+      document.addEventListener('pointermove', (e) => { window.__caPointer = { x: e.clientX, y: e.clientY }; }, true);
+    }
     const board = document.querySelector('wc-chess-board, chess-board, cg-board');
     if (!board) throw new Error('no board on this tab');
     const r = board.getBoundingClientRect();
@@ -142,111 +153,51 @@ async function playMove(uci: string, options: { real?: boolean; color?: 'w' | 'b
       const f = 'abcdefgh'.indexOf(sq[0]) + 1, k = Number(sq[1]);
       return flipped ? { x: r.left + (8 - f + 0.5) * s, y: r.top + (k - 0.5) * s } : { x: r.left + (f - 0.5) * s, y: r.top + (8 - k + 0.5) * s };
     };
-    return { from: center('${from}'), to: center('${to}'), flipped, last: window.__caPointer || null };
-  })`);
+    return { from: center(` + JSON.stringify(from) + `), to: center(` + JSON.stringify(to) + `), flipped, last: window.__caPointer || null };
+  `);
   const me = q.flipped ? 'b' : 'w';
   const stroke: Promise<unknown> = (typeof chrome !== 'undefined' && chrome.pointer_stroke)
     ? chrome.pointer_stroke({ from: q.from, to: q.to, decoys: 1, color: options.color || me }).catch(() => null)
     : Promise.resolve(null);
-  if (options.real) {
-    const stretch = arcPoints(q.last || { x: q.from.x, y: q.from.y + 140 }, q.from);
-    const drag = arcPoints(q.from, q.to);
-    await pw(`async (page) => {
-      const approach = ${JSON.stringify(stretch)};
-      const drag = ${JSON.stringify(drag)};
-      for (const p of approach) { await page.mouse.move(p.x, p.y); await page.waitForTimeout(4 + Math.random() * 9); }
-      await page.waitForTimeout(60 + Math.random() * 140);
-      await page.mouse.down();
-      await page.waitForTimeout(35 + Math.random() * 70);
-      for (const p of drag) { await page.mouse.move(p.x, p.y); await page.waitForTimeout(4 + Math.random() * 9); }
-      await page.waitForTimeout(25 + Math.random() * 60);
-      await page.mouse.up();
-      if ('${promo}') {
-        await page.waitForTimeout(150);
-        const p = '${promo}';
-        const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
-        const pick = page.locator('.promotion-piece.w' + p + ', .promotion-piece.b' + p + ', #promotion-choice piece.' + names[p]).first();
-        if (await pick.count()) await pick.click();
-      }
-      return true;
-    }`);
-    await stroke;
-    return;
+  const start = q.last || q.from;
+  if (start !== q.from) for (const p of arcPoints(start, q.from)) { await dispatchAt(p, 'pointermove', 0); await sleep(4 + Math.random() * 11); }
+  await sleep(80 + Math.random() * 140);                       // the hover dwell before the grab
+  await dispatchAt(q.from, 'pointermove', 0); await dispatchAt(q.from, 'pointerdown', 1); await dispatchAt(q.from, 'mousedown', 1);
+  await sleep(45 + Math.random() * 75);
+  for (const p of arcPoints(q.from, q.to)) { await dispatchAt(p, 'pointermove', 1); await sleep(5 + Math.random() * 12); }
+  await sleep(25 + Math.random() * 55);
+  await dispatchAt(q.to, 'pointermove', 1); await dispatchAt(q.to, 'pointerup', 0); await dispatchAt(q.to, 'mouseup', 0); await dispatchAt(q.to, 'click', 0);
+  const rest = { x: q.to.x + (Math.random() - 0.5) * 44, y: q.to.y + (Math.random() - 0.5) * 44 };
+  for (const p of arcPoints(q.to, rest)) { await dispatchAt(p, 'pointermove', 0); await sleep(4 + Math.random() * 8); }
+  if (promo) {
+    await chrome.run_js({ code: `setTimeout(() => {
+      const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+      const want = names[` + JSON.stringify(promo) + `];
+      const el = [...document.querySelectorAll('.promotion-piece, promotion-choice piece, .promotion-choice piece, #promotion-choice piece')]
+        .find((e) => [...e.classList].some((c) => c === want || c === ` + JSON.stringify(promo) + `));
+      if (el) { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0, buttons: 1 })); el.click(); }
+    }, 150);
+    return true;` });
   }
-  await Promise.all([stroke, pw(`async (page) => {
-    await page.evaluate(({ from: A, to: B, promo, last }) => {
-      const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-      const board = document.querySelector('wc-chess-board, chess-board, cg-board');
-      if (!board) throw new Error('no board on this tab');
-      const send = (p, type, buttons) => {
-        const el = document.elementFromPoint(p.x, p.y) || board;
-        const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: p.x, clientY: p.y, screenX: p.x, screenY: p.y, button: 0, buttons, isPrimary: true, pointerId: 1, pointerType: 'mouse' };
-        el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, o) : new MouseEvent(type, o));
-      };
-      const arc = (a, b) => {
-        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
-        const nx = -dy / d, ny = dx / d;
-        const bend = (0.10 + Math.random() * 0.24) * d * (Math.random() < 0.5 ? 1 : -1);
-        const cx = (a.x + b.x) / 2 + nx * bend, cy = (a.y + b.y) / 2 + ny * bend;
-        const N = Math.max(12, Math.min(26, Math.round(d / 13)));
-        const pts = [];
-        for (let i = 1; i <= N; i++) {
-          const t = i / N, e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, m = 1 - e;
-          const j = Math.sin(Math.PI * e) * 1.5;
-          pts.push({ x: m * m * a.x + 2 * m * e * cx + e * e * b.x + (Math.random() - 0.5) * j * nx * 2,
-                     y: m * m * a.y + 2 * m * e * cy + e * e * b.y + (Math.random() - 0.5) * j * ny * 2 });
-        }
-        return pts;
-      };
-      const start = last || { x: A.x, y: A.y + 120 };
-      return (async () => {
-        for (const p of arc(start, A)) { send(p, 'pointermove', 0); window.__caPointer = p; await sleep(4 + Math.random() * 9); }
-        await sleep(70 + Math.random() * 170);              // the hover dwell before the grab
-        send(A, 'pointerdown', 1); send(A, 'mousedown', 1);
-        await sleep(40 + Math.random() * 80);
-        for (const p of arc(A, B)) { send(p, 'pointermove', 1); window.__caPointer = p; await sleep(4 + Math.random() * 9); }
-        send(B, 'pointermove', 1);
-        await sleep(25 + Math.random() * 60);
-        send(B, 'pointerup', 0); send(B, 'mouseup', 0); send(B, 'click', 0);
-        const rest = { x: B.x + (Math.random() - 0.5) * 40, y: B.y + (Math.random() - 0.5) * 40 };
-        for (const p of arc(B, rest)) { send(p, 'pointermove', 0); window.__caPointer = p; await sleep(4 + Math.random() * 8); }
-        window.__caPointer = rest;
-        if (promo) {
-          const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
-          setTimeout(() => {
-            const want = names[promo];
-            const el = [...document.querySelectorAll('.promotion-piece, promotion-choice piece, .promotion-choice piece, #promotion-choice piece')]
-              .find((e) => [...e.classList].some((c) => c === want || c === promo));
-            if (el) { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0, buttons: 1 })); el.click(); }
-          }, 150);
-        }
-        return true;
-      })();
-    }, { from: ${JSON.stringify(q.from)}, to: ${JSON.stringify(q.to)}, promo: '${promo}', last: ${JSON.stringify(q.last)} });
-    return true;
-  }`)]);
+  await stroke;
 }
 
 // Waits until the move count passes `plies` (the opponent moved) or the game ends; returns the new state.
+// Polls from the host, not the page: background tabs throttle page timers, the host is not throttled.
 async function waitForMove(plies: number, timeoutMs = 120000): Promise<ChessState> {
-  // An expression string runs through the debugger, so the page's CSP (no eval) does not apply.
-  const until = `(() => { const s = (${READ_BOARD})(); return s.plies > ${plies} || s.over; })()`;
-  await pw(`async (page) => {
-    await page.waitForFunction(${JSON.stringify(until)}, null, { timeout: ${timeoutMs}, polling: 100 }).catch(() => null);
-    return true;
-  }`);
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const s = await chessState();
+    if (s.plies > plies || s.over) return s;
+    await sleep(350);
+  }
   return chessState();
-}
-
-// Waits in the page (the code mode script has no timers of its own).
-async function sleep(ms: number): Promise<void> {
-  if (ms <= 0) return;
-  await pw(`async (page) => { await page.waitForTimeout(${Math.round(ms)}); return true; }`);
 }
 
 // Plays a whole game for the side at the bottom of the board: read, think with the engine, move, wait.
 // movetimeMs: engine time per move; skill 0-20 (20 = strongest); minDelayMs/maxDelayMs: a random pause
 // before every move we send, so a live game against a person moves at a human pace instead of instantly.
+// The fair-play / rules sheet is accepted automatically (dismissGate), so rated games start and play on.
 async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves?: number; minDelayMs?: number; maxDelayMs?: number } = {}): Promise<{ moves: string[]; final: ChessState; note?: string }> {
   const { movetimeMs = 300, skill = 20, maxMoves = 200, minDelayMs = 0, maxDelayMs = 0 } = options;
   const moves: string[] = [];
@@ -258,14 +209,14 @@ async function playGame(options: { movetimeMs?: number; skill?: number; maxMoves
     let fen = state.fen;
     let played = false;
     // The board may refuse a click: the castling rights read off it are a guess (a rook moved and came
-    // back), or the site ignores synthetic events. Then the rights are dropped and a real click follows.
+    // back). Then the rights are dropped and the engine answers again instead of spinning.
     for (let attempt = 0; attempt < 3 && !played; attempt++) {
       if (attempt === 2) fen = fen.split(' ').map((f, i) => (i === 3 ? '-' : f)).join(' ');
       const r = JSON.parse(await engine.bestMove({ fen, movetimeMs, skill })) as { bestmove: string | null };
       if (!r.bestmove) break;
       if (maxDelayMs > minDelayMs) await sleep(minDelayMs + Math.random() * (maxDelayMs - minDelayMs));
       const before = state.plies;
-      await playMove(r.bestmove, { real: attempt > 0, color: me });
+      await playMove(r.bestmove, { color: me });
       const after = await waitForMove(before, 6000);
       if (after.plies > before) { moves.push(r.bestmove); state = after; played = true; break; }
       state = after;

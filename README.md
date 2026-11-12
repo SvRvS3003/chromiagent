@@ -104,7 +104,7 @@ While the agent works on a page, only its pointer acts there: your mouse clicks 
 
 ### It works in the background, in its own tabs
 
-The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts, screenshots and `watch` all work on tabs you are not looking at. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
+The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts and games all run there. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
 
 ### It follows everything that happens on a site
 
@@ -193,9 +193,9 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 | `navigate` | Load a URL, go back or forward, reload |
 | `read_page` | Page text, plus numbered buttons, links and inputs it can act on |
 | `click` · `type` · `scroll` | Act on an element by its number or a CSS selector |
-| `press_key` | Real key presses: Enter, Escape, Tab, arrow keys… |
-| `run_js` | Run JavaScript in the page and return the result |
-| `screenshot` | An image of any tab |
+| `press_key` | Key presses: Enter, Escape, Tab, arrow keys… |
+| `run_js` | Run JavaScript in the page and return the JSON-encoded value |
+| `screenshot` | An image of the visible tab (a background tab needs `monitor`/`events` — no debug bar) |
 | `watch` | Watches a tab like a short video: a timeline of the frames that changed; can stop the moment the page changes or a text appears |
 | `monitor` · `events` | A running log of everything on a tab (DOM, network, WebSocket, console, errors, navigation, user actions, media); `events` returns the moment something happens |
 | `ask_user` | A question card next to the agent's pointer: ready answers and a reply box, or a field for you to fill yourself |
@@ -205,7 +205,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 
 ![How it works](docs/how.png)
 
-- **`extension/`** is the browser extension: the side panel, a terminal (xterm.js), the element picker, and a bridge that runs the agent's tool calls through `chrome.tabs`, `chrome.scripting` and `chrome.debugger`.
+- **`extension/`** is the browser extension: the side panel, a terminal (xterm.js), the element picker, and a bridge that runs the agent's tool calls through `chrome.tabs` and `chrome.scripting`, and (only for code mode's Playwright sessions) a CDP bridge.
 - **`host/server.js`** is a small local server on `127.0.0.1:17371`. It gives the panel a real shell (node-pty: zsh or bash on macOS and Linux, cmd on Windows), keeps sessions alive while the panel is closed, and passes tool calls between the agent and the panel. It starts at login (launchd on macOS, a systemd user service on Linux, the Startup folder on Windows).
 - The agent is the CLI you pick, started in `host/workspace` (written by the host) with only two tool servers: the tab tools (`host/mcp.js`) and code mode (`host/codemode.js`, which runs Playwright MCP).
 - **One panel, one browser.** Every panel has its own id. The agent started in a panel only ever drives the browser that panel is open in.
@@ -215,7 +215,8 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 - **Chrome only.** In the panel, Claude Code's own shell and file tools are switched off and other MCP servers are not loaded. `file://` pages cannot be opened or read.
 - **Sandboxed code mode.** Agent scripts and Playwright run under Node's permission model (`--permission`), the same on every operating system. They cannot read or write your files or start programs: even code that escapes Playwright's VM and reaches Node's `fs` or `child_process` gets `ERR_ACCESS_DENIED`.
 - **Local only.** The host listens on `127.0.0.1`, and it accepts the terminal and bridge only from this extension's ID. Websites cannot connect to it.
-- **You see when it acts.** While the agent works on a tab, a neon light runs along the edges of that page; it fades out a moment after the agent stops. Chrome also shows its own "is debugging this browser" bar while code mode, `run_js` or `press_key` are attached. Chromiagent keeps that short: quick mode works without it, and code mode lets go of the browser 15 seconds after its last script, so the bar disappears.
+- **You see when it acts.** While the agent works on a tab, a neon light runs along the edges of that page; it fades out a moment after the agent stops.
+- **No debug bar for the everyday path.** Key presses, `run_js`, games of chess and everything else in quick mode run through signed extension paths — never a Chrome debugger — so the "started debugging this browser" bar never appears for them. Only heavy code mode sessions that need Playwright/CDP attach it, and they let go of the browser 15 seconds after the last script. To silence it even there, launch Chrome once with `--silent-debugger-extension-api` (macOS: `open -a "Google Chrome" --args --silent-debugger-extension-api`).
 - **It acts as you.** The agent uses your logged-in browser sessions. Watch what it does and use `Ctrl+C` to stop it.
 
 ## Update / uninstall
@@ -254,7 +255,7 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 
 **Shaxmat:** Stockfish dvigateli qo'shildi. Botga qarshi, tahlil va masalalarda agent taxtani HTML'dan o'qiydi, dvigateldan so'raydi va yuradi. Bir yurish 3 soniyaga yaqin vaqt oladi. Tirik odamlarga — reytingli o'yinlar ham — qarshi o'ynashi mumkin: sayt qoidalar oynasini ko'rsatsa (masalan chess.com'dagi fair-play rozilik oynasi), "roziman" tugmasini bosib davom etadi. Yurishlar odam kabi ko'rinadi: kursor titroq bilan egri chiziq bo'ylab boradi, avval boshqa donalarga ko'z tashlaydi, maydon ustida to'xtab, egri chiziq bo'ylab sudrab qo'yadi va chekkaga borib tinchib qoladi — teleport emas.
 
-**Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
+**Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi (faqat fokusda turgan tab uchun; orqa tablarni `monitor`/`events` orqali kuzatadi). Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 
 **Akkauntlar:** agent kirish, ro'yxatdan o'tish va parolni tiklash sahifalarini topib, email yoki loginni to'ldiradi. Parol va tasdiqlash kodlarini esa sahifadagi maydonga o'zingiz yozasiz, agent ularni ko'rmaydi.
 
