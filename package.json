@@ -1,6 +1,6 @@
 {
   "name": "@svrvs3003/chromiagent",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "description": "Agent side panel for Chromium browsers: a real terminal and an AI agent that sees and drives every open tab, with Playwright, TypeScript code mode and an element picker. Windows, macOS, Linux.",
   "author": "SvRvS",
   "license": "MIT",
