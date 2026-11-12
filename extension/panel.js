@@ -107,3 +107,33 @@ const loadAgents = () => new Promise((resolve) => {
 $('restart').onclick = () => startSession(true);
 $('close').onclick = () => { session?.send({ type: 'kill' }); setTimeout(() => window.close(), 50); };
 loadAgents().then(() => startSession());
+
+// ---- the agent's question shown in the panel itself, when the active tab is not a web page ----
+let closeAsk = null;
+function panelAsk({ question, options = [], placeholder }) {
+  closeAsk?.({ type: 'cancel' });
+  const form = $('ask'), input = $('ask-in');
+  $('ask-q').textContent = String(question || '');
+  $('ask-opts').replaceChildren(...options.slice(0, 9).map((label, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.append(Object.assign(document.createElement('kbd'), { textContent: i + 1 }), String(label));
+    b.onclick = () => closeAsk({ type: 'option', value: String(label) });
+    return b;
+  }));
+  input.value = '';
+  input.placeholder = placeholder || (options.length ? 'Or write your own answer…' : 'Your answer…');
+  form.hidden = false;
+  input.focus();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => closeAsk({ type: 'timeout' }), 10 * 60 * 1000);
+    closeAsk = (r) => { clearTimeout(timer); closeAsk = null; form.hidden = true; session?.term.focus(); resolve(r); };
+  });
+}
+$('ask').onsubmit = (e) => { e.preventDefault(); const v = $('ask-in').value.trim(); if (v) closeAsk?.({ type: 'text', value: v }); };
+$('ask-in').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('ask').requestSubmit(); } };
+$('ask-x').onclick = () => closeAsk?.({ type: 'cancel' });
+$('ask').onkeydown = (e) => {
+  if (e.key === 'Escape') closeAsk?.({ type: 'cancel' });
+  else if (/^[1-9]$/.test(e.key) && e.target !== $('ask-in')) $('ask-opts').children[e.key - 1]?.click();
+};

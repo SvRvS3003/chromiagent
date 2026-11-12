@@ -36,6 +36,7 @@ function mcpClient(command, args, env) {
       if (m.id !== undefined && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); }
     }
   });
+  proc.on('exit', () => { for (const w of waiting.values()) w({ error: { message: 'Playwright stopped' } }); waiting.clear(); });
   const rpc = (method, params) => new Promise((resolve, reject) => {
     const id = ++seq;
     waiting.set(id, (m) => (m.error ? reject(new Error(m.error.message)) : resolve(m.result)));
@@ -46,17 +47,29 @@ function mcpClient(command, args, env) {
     proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     return (await rpc('tools/list', {})).tools;
   })();
-  return { ready, call: (name, args) => rpc('tools/call', { name, arguments: args || {} }) };
+  return { ready, proc, call: async (name, args) => { await ready; return rpc('tools/call', { name, arguments: args || {} }); } };
 }
 
-const servers = {
-  chrome: mcpClient(process.execPath, [path.join(__dirname, 'mcp.js')]),
-  playwright: mcpClient(process.execPath, [
+const startPlaywright = () => mcpClient(process.execPath, [
     '--permission', `--allow-fs-read=${DIR}`, `--allow-fs-read=${OUT_REAL}`, `--allow-fs-write=${OUT_REAL}`, '--allow-worker',
     path.join(DIR, 'node_modules', '@playwright', 'mcp', 'cli.js'),
     '--cdp-endpoint', `ws://127.0.0.1:17371/cdp?panel=${process.env.CHROMIAGENT_PANEL || ''}`, '--output-dir', OUT_REAL,
-  ], SCRATCH_ENV),
-};
+  ], SCRATCH_ENV);
+const servers = { chrome: mcpClient(process.execPath, [path.join(__dirname, 'mcp.js')]), playwright: startPlaywright() };
+
+// While Playwright is connected Chrome shows its "is debugging this browser" bar on every tab. It is
+// closed a little after the last script ends, so the bar goes away, and started again on demand.
+const PLAYWRIGHT_IDLE_MS = 15000;
+let running = 0, idleTimer = null;
+function playwrightBusy() {
+  running++;
+  clearTimeout(idleTimer);
+  if (servers.playwright.proc.exitCode !== null || servers.playwright.proc.killed) servers.playwright = startPlaywright();
+}
+function playwrightDone() {
+  if (--running) return;
+  idleTimer = setTimeout(() => servers.playwright.proc.kill(), PLAYWRIGHT_IDLE_MS);
+}
 
 // ---------- JSON Schema -> TypeScript declarations ----------
 const ident = (k) => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k));
@@ -101,6 +114,7 @@ function runTypeScript(code) {
     execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
+  playwrightBusy();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { child.kill(); reject(new Error('Script timed out after 5 minutes')); }, 300000);
     child.on('message', async (msg) => {
@@ -121,7 +135,7 @@ function runTypeScript(code) {
     });
     child.on('exit', (c) => { clearTimeout(timer); reject(new Error(`Script process exited (${c})`)); });
     child.send({ type: 'run', js });
-  });
+  }).finally(playwrightDone);
 }
 
 // ---------- MCP server (stdio) ----------
@@ -135,7 +149,7 @@ async function handle({ id, method, params }) {
     await ready;
     return reply(id, { tools: [{
       name: 'run_typescript',
-      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright state (selected tab) persists between scripts. Available APIs:\n\n' + declarations,
+      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright is reconnected after 15 s without scripts, so select the tab again at the start of each script. Available APIs:\n\n' + declarations,
       inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'TypeScript function body' } }, required: ['code'] },
     }] });
   }

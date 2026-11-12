@@ -22,6 +22,13 @@
     </button>
   </header>
   <main id="termview"><div id="term"></div></main>
+  <form id="ask" hidden>
+    <div class="ask-head"><div class="sparkle"></div><b>Chromiagent</b> asks
+      <button type="button" id="ask-x" class="icon small" title="Cancel (Esc)" aria-label="Cancel"><svg viewBox="0 0 24 24"><path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/></svg></button></div>
+    <p id="ask-q"></p>
+    <div id="ask-opts"></div>
+    <div class="ask-row"><textarea id="ask-in" rows="1"></textarea><button type="submit" class="ask-send" aria-label="Send">↵</button></div>
+  </form>
   <script src="vendor/xterm.js"></script>
   <script src="vendor/addon-fit.js"></script>
   <script src="vendor/addon-webgl.js"></script>

@@ -7,6 +7,7 @@ const cdp = (() => {
   const childTab = new Map();     // child sessionId (iframes/workers) -> tabId
   const targetTab = new Map();    // real CDP targetId -> tabId
   const tabTarget = new Map();    // tabId -> real CDP targetId
+  const inputQueue = new Map();   // tabId -> last queued input command
 
   const sessionOf = (tabId) => `tab-${tabId}`;
   const tabOf = (sessionId) => (sessionId.startsWith('tab-') ? Number(sessionId.slice(4)) : childTab.get(sessionId));
@@ -36,6 +37,7 @@ const cdp = (() => {
     tabTarget.delete(tabId);
     targetTab.delete(targetId);
     for (const [s, t] of childTab) if (t === tabId) childTab.delete(s);
+    inputQueue.delete(tabId);
     out && out({ method: 'Target.detachedFromTarget', params: { sessionId, targetId } });
   }
 
@@ -83,7 +85,20 @@ const cdp = (() => {
         // Real actions light the tab up; Playwright's setup chatter on every tab does not.
         if (/^(Input\.|Page\.(navigate|reload)|Runtime\.(evaluate|callFunctionOn)$|DOM\.(focus|setFileInputFiles))/.test(method)) glow(tabId);
         const target = sessionId.startsWith('tab-') ? { tabId } : { tabId, sessionId };
-        result = await chrome.debugger.sendCommand(target, method, params);
+        const send = () => chrome.debugger.sendCommand(target, method, params);
+        if (method.startsWith('Input.')) {
+          // Input runs in order per tab, so a release never overtakes a press that waits for the pointer.
+          const run = (inputQueue.get(tabId) || Promise.resolve()).then(async () => {
+            // Playwright's mouse drives the agent's own pointer: it glides there, then the real event fires.
+            if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved') await pointTo(tabId, params.x, params.y, params.buttons ? 'drag' : 'Chromiagent');
+            if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') { await pointTo(tabId, params.x, params.y, 'click'); pressAt(tabId); }
+            return send();
+          });
+          inputQueue.set(tabId, run.catch(() => {}));
+          result = await run;
+        } else {
+          result = await send();
+        }
       }
       out && out({ id, result: result || {}, sessionId });
     } catch (e) {

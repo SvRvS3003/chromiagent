@@ -21,6 +21,13 @@ const TOOLS = [
   ['scroll', 'Scroll a tab by pixels (positive = down).', { ...TAB, dy: { type: 'number' } }, ['tabId', 'dy']],
   ['run_js', 'Evaluate JavaScript in the page (bypasses page CSP). Returns the value; promises are awaited.', { ...TAB, code: { type: 'string' } }, ['tabId', 'code']],
   ['screenshot', 'Screenshot of a tab (activates it first).', TAB, ['tabId']],
+  ['ask_user', 'Ask the user something without leaving the page: a card pops up next to your pointer with a reply box and, if given, ready answers to click. Waits up to 10 minutes and returns their answer. With ref/selector the card points at that field and the user types into it on the page (passwords, verification codes, card details); you get "done", never the value.',
+    { tabId: { type: 'number', description: 'Tab to ask on; default: the active tab' },
+      question: { type: 'string' },
+      options: { type: 'array', items: { type: 'string' }, description: 'Ready answers shown as buttons (max 9); the user can still type their own' },
+      placeholder: { type: 'string' },
+      ref: { type: 'number', description: 'Field from read_page that the user fills in themselves' },
+      selector: { type: 'string', description: 'CSS selector of that field (alternative to ref)' } }, ['question']],
 ].map(([name, description, properties, required]) => ({ name, description, inputSchema: { type: 'object', properties, required } }));
 
 let ws = null;
@@ -45,8 +52,9 @@ function connect() {
 async function callBridge(tool, args) {
   const s = await connect();
   const id = ++seq;
+  const ms = tool === 'ask_user' ? 11 * 60000 : 60000; // the user gets 10 minutes to answer
   return new Promise((resolve) => {
-    const timer = setTimeout(() => { waiting.delete(id); resolve({ error: `${tool} timed out after 60s` }); }, 60000);
+    const timer = setTimeout(() => { waiting.delete(id); resolve({ error: `${tool} timed out after ${ms / 1000}s` }); }, ms);
     waiting.set(id, (m) => { clearTimeout(timer); resolve(m); });
     s.send(JSON.stringify({ id, tool, args }));
   });

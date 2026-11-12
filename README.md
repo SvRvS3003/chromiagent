@@ -86,6 +86,20 @@ Click the select icon in the panel header, hover any element on the page and cli
 
 Values typed into form fields are never sent. The element picker is adapted from [Orca](https://github.com/stablyai/orca)'s browser grab mode (MIT).
 
+## Its own pointer, and questions on the page
+
+The agent has its own pointer, separate from your mouse, in the logo's animated neon green and white. It glides to whatever the agent is about to click or type into, in quick mode and in Playwright code mode alike, so you can follow every step.
+
+When the agent needs you, it does not ask in the terminal. A card pops out next to its pointer with the question, ready answers you can click (or press `1`–`9`), and a box for your own reply (`Enter` sends, `Esc` cancels). On pages where nothing can be shown, such as `chrome://` pages, the same card opens in the panel.
+
+<p><img src="docs/ask.png" width="400" alt="A question card next to the agent's pointer"></p>
+
+### Signing in, signing up, resetting a password
+
+The agent finds the sign-in, sign-up or "forgot password" page and fills in your email or username. For every password, new password or verification code it points at the field and the card asks you to type it yourself, right in the page. You press **Done** (or `Ctrl+Enter`), and the agent continues. It never sees, types or stores the value: `read_page` hides password values, and its `type` tool refuses password fields. CAPTCHAs, passkeys and "allow access" screens are yours too.
+
+<p><img src="docs/secret.png" width="400" alt="The agent points at a password field and asks the user to type it"></p>
+
 ## Sessions
 
 Closing the panel keeps the agent running. Open it again in the same window and you are back in the same session, with the conversation where you left it. The **+** button in the panel starts a new session and **✕** ends it. A session that stays closed for 12 hours ends on its own.
@@ -142,6 +156,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 | `press_key` | Real key presses: Enter, Escape, Tab, arrow keys… |
 | `run_js` | Run JavaScript in the page and return the result |
 | `screenshot` | An image of any tab |
+| `ask_user` | A question card next to the agent's pointer: ready answers and a reply box, or a field for you to fill yourself |
 
 
 ## How it works
@@ -158,7 +173,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 - **Chrome only.** In the panel, Claude Code's own shell and file tools are switched off and other MCP servers are not loaded. `file://` pages cannot be opened or read.
 - **Sandboxed code mode.** Agent scripts and Playwright run under Node's permission model (`--permission`), the same on every operating system. They cannot read or write your files or start programs: even code that escapes Playwright's VM and reaches Node's `fs` or `child_process` gets `ERR_ACCESS_DENIED`.
 - **Local only.** The host listens on `127.0.0.1`, and it accepts the terminal and bridge only from this extension's ID. Websites cannot connect to it.
-- **You see when it acts.** While the agent works on a tab, a neon light runs along the edges of that page; it fades out a moment after the agent stops. Chrome also shows its own "is debugging this browser" bar while code mode, `run_js` or `press_key` are attached (only the browser can hide that bar).
+- **You see when it acts.** While the agent works on a tab, a neon light runs along the edges of that page; it fades out a moment after the agent stops. Chrome also shows its own "is debugging this browser" bar while code mode, `run_js` or `press_key` are attached. Chromiagent keeps that short: quick mode works without it, and code mode lets go of the browser 15 seconds after its last script, so the bar disappears.
 - **It acts as you.** The agent uses your logged-in browser sessions. Watch what it does and use `Ctrl+C` to stop it.
 
 ## Update / uninstall
@@ -186,6 +201,10 @@ curl -fsSL https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.
 Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamda barcha Chromium brauzerlarida ishlaydi (Chrome, Edge, Brave, Vivaldi, Opera, Arc). Undagi AI agent barcha ochiq tablarni ko'radi va boshqaradi. Murakkab vazifalarda u o'zi TypeScript code mode'ga o'tadi va Playwright'ni (`browser_evaluate`, `browser_run_code_unsafe`) sizning ochiq brauzeringizda ishlatadi.
 
 **Element belgilash:** paneldagi belgilash tugmasini bosing, sahifadagi elementni tanlang, izoh yozing va `Ctrl+Enter` bosing. Izoh element ma'lumotlari bilan birga agentga yuboriladi.
+
+**Agent kursori:** agentning o'z kursori bor, u logotip rangida (neon yashil va oq) jilolanadi va agent bosmoqchi yoki yozmoqchi bo'lgan joyga suzib boradi. Agentga sizdan biror narsa kerak bo'lsa, terminalda emas, kursor yonida savol oynasi chiqadi: tayyor javob variantlari va yozish maydoni bilan.
+
+**Akkauntlar:** agent kirish, ro'yxatdan o'tish va parolni tiklash sahifalarini topib, email yoki loginni to'ldiradi. Parol va tasdiqlash kodlarini esa sahifadagi maydonga o'zingiz yozasiz, agent ularni ko'rmaydi.
 
 **Sessiya:** panelni yopib qayta ochsangiz, sessiya davom etadi. `+` yangi sessiya ochadi, `✕` sessiyani tugatadi.
 

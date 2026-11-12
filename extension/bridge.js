@@ -29,7 +29,7 @@ function pageSnapshot(maxChars) {
     if (r.width < 1 || r.height < 1 || st.visibility === 'hidden' || st.display === 'none') continue;
     if (n >= 400) break;
     e.setAttribute('data-ca', n);
-    const label = (e.getAttribute('aria-label') || e.innerText || e.value || e.placeholder || e.title || e.alt || e.name || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    const label = (e.getAttribute('aria-label') || e.innerText || (e.type === 'password' ? '' : e.value) || e.placeholder || e.title || e.alt || e.name || '').trim().replace(/\s+/g, ' ').slice(0, 80);
     const kind = e.tagName.toLowerCase() + (e.type ? `:${e.type}` : '') + (e.getAttribute('role') ? `[${e.getAttribute('role')}]` : '');
     const inView = r.bottom > 0 && r.top < innerHeight ? '' : ' (offscreen)';
     lines.push(`[${n}] ${kind} "${label}"${e.href ? ' -> ' + e.href : ''}${inView}`);
@@ -50,6 +50,7 @@ function pageAct(action, ref, selector, text, submit, dy) {
     return 'clicked';
   }
   // type
+  if (el.type === 'password') return { error: 'password fields are typed by the user: call ask_user with this field' };
   el.focus();
   if (el.isContentEditable) {
     document.execCommand('selectAll', false);
@@ -88,6 +89,49 @@ async function inPage(tabId, func, args) {
   return r.result;
 }
 
+// Scrolls the element into view and returns its center, for the agent's pointer.
+function pageLocate(ref, selector) {
+  const el = selector ? document.querySelector(selector) : document.querySelector(`[data-ca="${ref}"]`);
+  if (!el) return null;
+  el.scrollIntoView({ block: 'center', inline: 'center' });
+  const r = el.getBoundingClientRect();
+  return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2) };
+}
+
+// ---- the agent's own pointer and question card (agent-ui.js, injected into the page) ----
+const pointer = new Map(); // tabId -> last pointer position, so it glides on from there after a reload
+async function ui(tabId, method, ...args) {
+  const target = { tabId };
+  await chrome.scripting.executeScript({ target, files: ['agent-ui.js'] });
+  const [r] = await chrome.scripting.executeScript({ target, func: (m, a) => globalThis.__chromiagentUI[m](...a), args: [method, args] });
+  return r.result;
+}
+async function pointTo(tabId, x, y, label) {
+  try {
+    const p = await ui(tabId, 'move', x, y, label, pointer.get(tabId));
+    if (p) pointer.set(tabId, p);
+  } catch {} // chrome://, the web store, or a closed tab: act without the pointer
+}
+const pressAt = (tabId) => ui(tabId, 'press').catch(() => {});
+async function pointAtElement(tabId, ref, selector, label) {
+  const p = await inPage(tabId, pageLocate, [ref ?? null, selector ?? null]);
+  if (p) await pointTo(tabId, p.x, p.y, label);
+  return p;
+}
+chrome.tabs.onRemoved.addListener((tabId) => pointer.delete(tabId));
+
+const ANSWERS = {
+  text: (v) => `The user answered: ${v}`,
+  option: (v) => `The user chose: ${v}`,
+  done: () => 'The user filled the field themselves and pressed Done. Its value is not shared with you; read_page to see the next step.',
+  cancel: () => 'The user cancelled the question.',
+  timeout: () => 'No answer after 10 minutes.',
+};
+const answerText = (r) => {
+  if (r?.type === 'error') throw new Error(r.value);
+  return (ANSWERS[r?.type] || ANSWERS.cancel)(r?.value);
+};
+
 const tools = {
   async list_tabs() {
     const tabs = await chrome.tabs.query({});
@@ -116,8 +160,16 @@ const tools = {
     return { title: t.title, url: t.url };
   },
   read_page: ({ tabId, maxChars }) => inPage(tabId, pageSnapshot, [maxChars || 15000]),
-  click: ({ tabId, ref, selector }) => inPage(tabId, pageAct, ['click', ref ?? null, selector ?? null, null, false, 0]),
-  type: ({ tabId, ref, selector, text, submit }) => inPage(tabId, pageAct, ['type', ref ?? null, selector ?? null, text, !!submit, 0]),
+  async click({ tabId, ref, selector }) {
+    await pointAtElement(tabId, ref, selector, 'click');
+    const r = await inPage(tabId, pageAct, ['click', ref ?? null, selector ?? null, null, false, 0]);
+    if (r === 'clicked') pressAt(tabId);
+    return r;
+  },
+  async type({ tabId, ref, selector, text, submit }) {
+    await pointAtElement(tabId, ref, selector, 'typing');
+    return inPage(tabId, pageAct, ['type', ref ?? null, selector ?? null, text, !!submit, 0]);
+  },
   scroll: ({ tabId, dy }) => inPage(tabId, pageAct, ['scroll', null, null, null, false, dy]),
   press_key: ({ tabId, key }) => withDebugger(tabId, async (send) => {
     const code = KEYS[key] ?? key.toUpperCase().charCodeAt(0);
@@ -131,6 +183,26 @@ const tools = {
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value === undefined ? '(undefined)' : r.result.value;
   }),
+  // A question next to the agent's pointer; with ref/selector the user fills that field on the page.
+  async ask_user({ tabId, question, options, placeholder, ref, selector }) {
+    const { windowId } = await panelReady;
+    const tab = tabId ? await chrome.tabs.get(tabId) : (await chrome.tabs.query({ active: true, windowId }))[0];
+    const field = ref != null || !!selector;
+    if (!/^https?:/i.test(tab?.url || '')) {
+      if (field) throw new Error('fields can only be filled on a web page');
+      return answerText(await panelAsk({ question, options, placeholder }));
+    }
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    if (field && !(await pointAtElement(tab.id, ref, selector, 'your turn'))) throw new Error('field not found; call read_page again');
+    try {
+      return answerText(await ui(tab.id, 'ask', { question, options: options || [], placeholder, ref, selector }));
+    } catch (e) {
+      // Pressing Enter in a login form usually submits it and loads a new page.
+      if (field && /frame|navigat|closed|No tab/i.test(e.message)) return 'The page changed while the user was filling the field (they probably submitted it). Call read_page to check.';
+      throw e;
+    }
+  },
   async screenshot({ tabId }) {
     const t = await chrome.tabs.update(tabId, { active: true });
     noFile(t.url);

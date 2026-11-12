@@ -51,7 +51,8 @@ function writeWorkspace() {
   });
   // Qwen Code and Gemini CLI share the settings format.
   const geminiStyle = {
-    mcpServers: MCP_SERVERS,
+    // ask_user waits up to 10 minutes for the user.
+    mcpServers: Object.fromEntries(Object.entries(MCP_SERVERS).map(([k, v]) => [k, { ...v, timeout: 900000 }])),
     context: { fileName: ['AGENTS.md'] },
     tools: { exclude: ['run_shell_command', 'write_file', 'replace', 'edit', 'read_file', 'read_many_files', 'glob', 'search_file_content', 'grep_search', 'list_directory'] },
   };
@@ -62,7 +63,7 @@ writeWorkspace();
 
 // Typed into the user's own shell, so their aliases and functions (e.g. a `claude` wrapper) still apply.
 const q = (s) => (WIN ? `"${s.replace(/"/g, '\\"')}"` : `'${s.replace(/'/g, `'\\''`)}'`);
-const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`];
+const tomlArgs = (name, v) => [`mcp_servers.${name}.command=${JSON.stringify(v.command)}`, `mcp_servers.${name}.args=${JSON.stringify(v.args)}`, `mcp_servers.${name}.tool_timeout_sec=900`];
 const AGENTS = {
   // Browser-only: Claude Code's built-in shell/file tools are off and no other MCP servers load.
   // Windows runs cmd.exe, which passes "" through to claude (Windows PowerShell 5 would drop it).
