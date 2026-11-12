@@ -391,7 +391,7 @@ async function connectBridge() {
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data);
     if (msg.cdpOpen) return cdp.open((m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ cdp: m })));
-    if (msg.cdpClose) return cdp.close();
+    if (msg.cdpClose) { console.info('[chromiagent] playwright disconnected'); return cdp.close(); }
     if (msg.cdp) return cdp.message(msg.cdp);
     const { id, tool, args } = msg;
     let out;
@@ -406,6 +406,6 @@ async function connectBridge() {
     }
     ws.send(JSON.stringify(out));
   };
-  ws.onclose = () => { cdp.close(); setTimeout(connectBridge, 2000); };
+  ws.onclose = () => { console.info('[chromiagent] bridge closed'); cdp.close(); setTimeout(connectBridge, 2000); };
 }
 connectBridge();

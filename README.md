@@ -111,6 +111,10 @@ const r = await observe(tabId, async (events) => {
 }, { seconds: 600 });
 ```
 
+### Chess at engine speed
+
+Stockfish 19 Lite (WASM, GPL-3, in `host/engine/`) is built in. Against a computer bot, in analysis or puzzles on chess.com and lichess, the agent runs one code mode script, `playGame()` from `host/chess.ts`: it reads the board from the page's HTML (no screenshots), asks the engine, plays the move and waits for the reply, about 3 seconds a move instead of minutes. It is not for live games against people: that breaks fair-play rules and gets accounts banned.
+
 ### It watches, like a video
 
 `watch` records a tab at two frames a second and gives the agent the frames where something changed, laid out as one timeline. It can also return the moment the page changes (`untilChange`) or a text appears (`untilText`), so the agent works in a loop: watch, decide, act, watch again. For reactions faster than that, it writes the loop in code mode with Playwright's `waitForSelector` and `waitForFunction`.
@@ -236,6 +240,8 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar fonda, yashil "Chromiagent" guruhida ochiladi, shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
 
 **Saytni uzluksiz kuzatish:** `monitor` sahifaga yozib boruvchi skript qo'yadi, u sahifadagi hamma narsani qayd etadi: DOM o'zgarishlari, tarmoq so'rovlari, WebSocket, konsol xatolari, sahifa manzili, sizning harakatlaringiz. Code mode'da agent `observe()` bilan 30 daqiqagacha to'xtovsiz kuzatadi, voqealarni kelishi bilan tahlil qiladi va darhol harakat qiladi.
+
+**Shaxmat:** Stockfish dvigateli qo'shildi. Botga qarshi, tahlil va masalalarda agent taxtani HTML'dan o'qiydi, dvigateldan so'raydi va yuradi. Bir yurish 3 soniyaga yaqin vaqt oladi. Tirik odamlarga qarshi ishlatilmaydi.
 
 **Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 

@@ -24,7 +24,7 @@ process.on('message', async (msg) => {
 
   try {
     const main = new Function(`${msg.js}\nreturn __main;`)();
-    const result = await main(api('chrome'), api('playwright'), { log, info: log, warn: log, error: log });
+    const result = await main(api('chrome'), api('playwright'), api('engine'), { log, info: log, warn: log, error: log });
     process.send({ type: 'done', logs, result: result === undefined ? null : result });
   } catch (e) {
     // Only the script's own frames are useful to the agent; runner and Node internals are noise.

@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stripTypeScriptTypes } = require('node:module');
+const engine = require('./engine');
 
 const DIR = fs.realpathSync(path.join(__dirname, '..'));
 // Short on Unix: Playwright opens sockets in here, and socket paths max out near 104 bytes.
@@ -54,6 +55,8 @@ const startPlaywright = () => mcpClient(process.execPath, [
     '--permission', `--allow-fs-read=${DIR}`, `--allow-fs-read=${OUT_REAL}`, `--allow-fs-write=${OUT_REAL}`, '--allow-worker',
     path.join(DIR, 'node_modules', '@playwright', 'mcp', 'cli.js'),
     '--cdp-endpoint', `ws://127.0.0.1:17371/cdp?panel=${process.env.CHROMIAGENT_PANEL || ''}`, '--output-dir', OUT_REAL,
+  // Scripts read what they need themselves; a full page snapshot after every action made each call slow.
+  '--snapshot-mode', 'none', '--image-responses', 'omit',
   ], SCRATCH_ENV);
 const servers = { chrome: mcpClient(process.execPath, [path.join(__dirname, 'mcp.js')]), playwright: startPlaywright() };
 
@@ -108,12 +111,12 @@ const asText = (r) => {
   return text;
 };
 // observe() and untilEvent() (host/observe.ts) are available inside every script.
-const LIBRARY = fs.readFileSync(path.join(__dirname, 'observe.ts'), 'utf8');
+const LIBRARY = ['observe.ts', 'chess.ts'].map((f) => fs.readFileSync(path.join(__dirname, f), 'utf8')).join('\n');
 
 // The script runs in a fresh, permission-restricted process; its tool calls come back here over IPC.
 function runTypeScript(code, timeoutSec = 300) {
   const limit = Math.min(Math.max(timeoutSec, 10), 1800);
-  const js = stripTypeScriptTypes(`async function __main(chrome, playwright, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
+  const js = stripTypeScriptTypes(`async function __main(chrome, playwright, engine, console) {\n${LIBRARY}\n${code}\n}`, { mode: 'strip' });
   const child = fork(path.join(__dirname, 'runner.js'), [], {
     execArgv: ['--permission', `--allow-fs-read=${path.join(__dirname, 'runner.js')}`],
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
@@ -124,6 +127,11 @@ function runTypeScript(code, timeoutSec = 300) {
     child.on('message', async (msg) => {
       if (msg.type === 'call') {
         try {
+          if (msg.ns === 'engine') {
+            if (msg.name !== 'bestMove') throw new Error('engine has only bestMove');
+            child.send({ type: 'reply', id: msg.id, text: JSON.stringify(await engine.bestMove(msg.args)) });
+            return;
+          }
           if (!servers[msg.ns]) throw new Error(`Unknown API ${msg.ns}`);
           child.send({ type: 'reply', id: msg.id, text: asText(await servers[msg.ns].call(msg.name, msg.args)) });
         } catch (e) {
@@ -158,12 +166,20 @@ async function handle({ id, method, params }) {
   if (method === 'tools/list') {
     await ready;
     return reply(id, { tools: [{
+      name: 'best_move',
+      description: 'Stockfish 19 Lite: the best move for a position (FEN or "startpos" plus UCI moves), with score and main line. For games against computer bots, analysis and puzzles only, never live games against people. For a whole game use code mode playGame().',
+      inputSchema: { type: 'object', properties: { fen: { type: 'string' }, moves: { type: 'array', items: { type: 'string' } }, movetimeMs: { type: 'number', description: 'Think time, default 300' }, skill: { type: 'number', description: '0-20, default 20' }, multipv: { type: 'number', description: 'Best N lines, 1-5' } } },
+    }, {
       name: 'run_typescript',
-      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright is reconnected after 15 s without scripts, so select the tab again at the start of each script. Scripts stop after timeoutSec (default 300, max 1800).\n\nContinuous watching: `observe(tabId, handler, { seconds })` calls your handler with every new batch of page events the moment they happen (DOM changes, network, WebSocket, console, errors, navigation, user actions, media) until time runs out or the handler returns true; the handler can analyse and act in between. `untilEvent(tabId, match)` waits for one event. Their source:\n\n' + LIBRARY + '\n\nAvailable APIs:\n\n' + declarations,
+      description: 'Code mode: run a TypeScript script against the user\'s real Chrome. The script is the body of an async function: use await, and `return` the final value (it is sent back as JSON). console.log output is returned too. Every call returns the tool\'s text output. Playwright is reconnected after 15 s without scripts, so select the tab again at the start of each script. Scripts stop after timeoutSec (default 300, max 1800).\n\nContinuous watching: `observe(tabId, handler, { seconds })` calls your handler with every new batch of page events the moment they happen (DOM changes, network, WebSocket, console, errors, navigation, user actions, media) until time runs out or the handler returns true; the handler can analyse and act in between. `untilEvent(tabId, match)` waits for one event. Their source:\n\n' + LIBRARY + '\n\nChess engine: `engine.bestMove({ fen, moves?, movetimeMs?, depth?, skill?, multipv? })` returns JSON text `{ bestmove, ponder, lines: [{ depth, cp | mate, pv }] }` from Stockfish 19 Lite. Use it only against computer bots, for analysis and puzzles, never in a live game against a person (fair-play rules; the account gets banned).\n\nAvailable APIs:\n\n' + declarations,
       inputSchema: { type: 'object', properties: { code: { type: 'string', description: 'TypeScript function body' }, timeoutSec: { type: 'number', description: 'Longest run in seconds (default 300, max 1800); raise it for long observe() loops' } }, required: ['code'] },
     }] });
   }
   if (method === 'tools/call') {
+    if (params.name === 'best_move') {
+      try { return reply(id, { content: [{ type: 'text', text: JSON.stringify(await engine.bestMove(params.arguments || {})) }] }); }
+      catch (e) { return reply(id, { isError: true, content: [{ type: 'text', text: String(e.message || e) }] }); }
+    }
     try {
       await ready;
       return reply(id, { content: [{ type: 'text', text: await runTypeScript(params.arguments.code, params.arguments.timeoutSec) }] });

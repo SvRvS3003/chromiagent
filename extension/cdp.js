@@ -74,6 +74,9 @@ const cdp = (() => {
   }
 
   async function command({ id, method, params = {}, sessionId }) {
+    // A reply is only sent to the client that asked: after a reconnect, late replies would confuse the new one.
+    const asker = out;
+    const reply = (m) => { if (out && out === asker) out(m); };
     try {
       let result;
       if (!sessionId) {
@@ -82,7 +85,7 @@ const cdp = (() => {
         const tabId = tabOf(sessionId);
         if (tabId === undefined) throw new Error(`No session ${sessionId}`);
         if (method === 'Page.navigate' && !usable(params.url)) throw new Error('file:// and browser-internal URLs are blocked');
-        if (method === 'Page.bringToFront') { out && out({ id, result: {}, sessionId }); return; } // stays in the background
+        if (method === 'Page.bringToFront') { reply({ id, result: {}, sessionId }); return; } // stays in the background
         // Real actions light the tab up; Playwright's setup chatter on every tab does not.
         if (/^(Input\.|Page\.(navigate|reload)|Runtime\.(evaluate|callFunctionOn)$|DOM\.(focus|setFileInputFiles))/.test(method)) glow(tabId);
         const target = sessionId.startsWith('tab-') ? { tabId } : { tabId, sessionId };
@@ -104,9 +107,9 @@ const cdp = (() => {
           result = await send();
         }
       }
-      out && out({ id, result: result || {}, sessionId });
+      reply({ id, result: result || {}, sessionId });
     } catch (e) {
-      out && out({ id, error: { code: -32000, message: String(e.message || e) }, sessionId });
+      reply({ id, error: { code: -32000, message: String(e.message || e) }, sessionId });
     }
   }
 
@@ -115,11 +118,11 @@ const cdp = (() => {
     if (method === 'Target.attachedToTarget') childTab.set(params.sessionId, source.tabId);
     out({ method, params, sessionId: source.sessionId || sessionOf(source.tabId) });
   });
-  chrome.debugger.onDetach.addListener((source) => forget(source.tabId));
+  chrome.debugger.onDetach.addListener((source, reason) => { if (tabSession.has(source.tabId)) console.info("[chromiagent] debugger detached", source.tabId, reason); forget(source.tabId); });
   chrome.tabs.onRemoved.addListener(forget);
   chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
     if (!change.url) return;
-    if (!usable(change.url)) { chrome.debugger.detach({ tabId }).catch(() => {}); forget(tabId); return; }
+    if (!usable(change.url)) { if (tabSession.has(tabId)) console.info("[chromiagent] tab left the web", tabId, change.url); chrome.debugger.detach({ tabId }).catch(() => {}); forget(tabId); return; }
     attach(tab); // new tab or a tab that just became a web page
   });
 
@@ -136,7 +139,7 @@ const cdp = (() => {
   return {
     attachedTabs: tabSession,
     // A new Playwright client starts clean, so it is told about every tab again.
-    open(send) { ready = ready.then(close).then(() => { out = send; }); },
+    open(send) { console.info('[chromiagent] playwright connected'); ready = ready.then(close).then(() => { out = send; }); },
     message(msg) { ready.then(() => command(msg)); },
     close() { ready = ready.then(close); return ready; },
   };
