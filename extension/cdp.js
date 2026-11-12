@@ -56,7 +56,7 @@ const cdp = (() => {
         const url = params.url || 'about:blank';
         if (!usable(url) && url !== 'about:blank') throw new Error('Only http(s) pages are allowed');
         const t = await chrome.tabs.create({ url, active: false });
-        await intoAgentGroup(t);
+        if (typeof markMine === 'function') await markMine(t.id);
         // Attaching while the new tab is still committing gets dropped; wait for it to settle.
         for (let i = 0; i < 40 && (await chrome.tabs.get(t.id)).status !== 'complete'; i++) await new Promise((r) => setTimeout(r, 100));
         await attach(t, true);
