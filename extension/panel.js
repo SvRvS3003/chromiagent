@@ -137,3 +137,14 @@ $('ask').onkeydown = (e) => {
   if (e.key === 'Escape') closeAsk?.({ type: 'cancel' });
   else if (/^[1-9]$/.test(e.key) && e.target !== $('ask-in')) $('ask-opts').children[e.key - 1]?.click();
 };
+
+// The agent waits for the user on a tab they are not looking at; the button takes them there.
+function panelNotice(text, tab) {
+  $('notice-q').textContent = text;
+  $('notice-go').onclick = async () => {
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+  };
+  $('notice').hidden = false;
+  return () => { $('notice').hidden = true; };
+}

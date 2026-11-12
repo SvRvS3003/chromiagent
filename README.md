@@ -92,6 +92,10 @@ The agent has its own pointer, separate from your mouse, in the logo's animated 
 
 While the agent works on a page, only its pointer acts there: your mouse clicks on that page are held back and your cursor shows a "not allowed" sign, so the two never get mixed up. Press `Esc` to take your mouse back at once; it also comes back by itself a moment after the agent stops. Other tabs and windows are yours as usual.
 
+### It works in the background, in its own tabs
+
+The agent never pulls you to its tab. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts, screenshots and `watch` all work on tabs you are not looking at. Tabs it opens itself go into a green **Chromiagent** tab group in the background, so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
+
 ### It watches, like a video
 
 `watch` records a tab at two frames a second and gives the agent the frames where something changed, laid out as one timeline. It can also return the moment the page changes (`untilChange`) or a text appears (`untilText`), so the agent works in a loop: watch, decide, act, watch again. For reactions faster than that, it writes the loop in code mode with Playwright's `waitForSelector` and `waitForFunction`.
@@ -212,6 +216,8 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Agent kursori:** agentning o'z kursori bor, u logotip rangida (neon yashil va oq) jilolanadi va agent bosmoqchi yoki yozmoqchi bo'lgan joyga suzib boradi. Agentga sizdan biror narsa kerak bo'lsa, terminalda emas, kursor yonida savol oynasi chiqadi: tayyor javob variantlari va yozish maydoni bilan.
 
 **Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
+
+**Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar fonda, yashil "Chromiagent" guruhida ochiladi, shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
 
 **Video kabi ko'rish:** `watch` tabni soniyasiga 2 kadrdan kuzatadi va o'zgargan kadrlarni agentga vaqt chizig'i qilib beradi. Sahifa o'zgarishi yoki kerakli matn chiqishi bilan darhol qaytadi, agent esa ko'rib-qaror qilib-harakat qilish siklida ishlaydi.
 

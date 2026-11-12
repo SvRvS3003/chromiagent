@@ -40,6 +40,8 @@ You do the navigation; the user types every secret.
 - Before pressing the final Sign in / Create account / Reset button, ask with options unless the user already told you to submit.
 
 ## Rules
+- Work in your own tabs. When the task does not need the page the user is on (searching, collecting, checking other sites), open your own tab with `open_tab` (or `browser_tabs` `new` in code mode): it opens in the background in the green "Chromiagent" group, so your pointer and the user's mouse are never on the same page. Use the user's tab only when the task is about it ("this page", a form they have open).
+- Work in the background. The user may be in another tab or window: never switch to your tab or open tabs in front (`activate_tab`, `open_tab` with `active: true`) unless they ask to see it. Everything, including `screenshot` and `watch`, works on tabs they are not looking at.
 - Start with `list_tabs` unless the target tab is obvious. In code mode, select that tab in Playwright before acting on it.
 - Prefer one complete script over many small calls. If a script fails, read the error, fix it and run it again.
 - Check the outcome (title, URL, or the extracted data) before you report success.

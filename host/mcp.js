@@ -11,7 +11,7 @@ const TARGET = {
 const TOOLS = [
   ['list_tabs', 'List every open tab in every Chrome window (id, window, active, title, url, audible).', {}, []],
   ['activate_tab', 'Switch to a tab and focus its window.', TAB, ['tabId']],
-  ['open_tab', 'Open a new tab.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
+  ['open_tab', 'Open a new tab in the background (the user stays where they are). active: true only if the user asked to see it.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
   ['close_tab', 'Close a tab.', TAB, ['tabId']],
   ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, ['tabId']],
   ['read_page', 'Read a tab: title, url, visible text, and numbered interactive elements (use the numbers as ref).', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, ['tabId']],

@@ -55,7 +55,8 @@ const cdp = (() => {
       case 'Target.createTarget': {
         const url = params.url || 'about:blank';
         if (!usable(url) && url !== 'about:blank') throw new Error('Only http(s) pages are allowed');
-        const t = await chrome.tabs.create({ url });
+        const t = await chrome.tabs.create({ url, active: false });
+        await intoAgentGroup(t);
         // Attaching while the new tab is still committing gets dropped; wait for it to settle.
         for (let i = 0; i < 40 && (await chrome.tabs.get(t.id)).status !== 'complete'; i++) await new Promise((r) => setTimeout(r, 100));
         await attach(t, true);
@@ -66,8 +67,7 @@ const cdp = (() => {
         await chrome.tabs.remove(targetTab.get(params.targetId));
         return { success: true };
       case 'Target.activateTarget':
-        await chrome.tabs.update(targetTab.get(params.targetId), { active: true });
-        return {};
+        return {}; // the agent works in the background: it never pulls the user to its tab
       default:
         return {}; // permissions, download behavior, discovery: nothing to do for a real browser
     }
@@ -82,6 +82,7 @@ const cdp = (() => {
         const tabId = tabOf(sessionId);
         if (tabId === undefined) throw new Error(`No session ${sessionId}`);
         if (method === 'Page.navigate' && !usable(params.url)) throw new Error('file:// and browser-internal URLs are blocked');
+        if (method === 'Page.bringToFront') { out && out({ id, result: {}, sessionId }); return; } // stays in the background
         // Real actions light the tab up; Playwright's setup chatter on every tab does not.
         if (/^(Input\.|Page\.(navigate|reload)|Runtime\.(evaluate|callFunctionOn)$|DOM\.(focus|setFileInputFiles))/.test(method)) glow(tabId);
         const target = sessionId.startsWith('tab-') ? { tabId } : { tabId, sessionId };

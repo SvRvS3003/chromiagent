@@ -129,7 +129,8 @@
       cursor.classList.add('on');
     }
     const dist = Math.hypot(x - start.x, y - start.y);
-    const ms = dist < 3 || matchMedia('(prefers-reduced-motion: reduce)').matches ? 0
+    // A hidden tab neither animates nor runs timers on time, so the pointer just jumps there.
+    const ms = dist < 3 || document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches ? 0
       : Math.round(Math.min(560, Math.max(140, dist * 0.7)));
     cursor.style.setProperty('--t', `${ms}ms`);
     place(x, y);

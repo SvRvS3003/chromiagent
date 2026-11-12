@@ -48,7 +48,7 @@ header .sparkle {
 @property --a { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
 @keyframes ask-spin { to { --a: 360deg; } }
 @keyframes ask-pop { from { opacity: 0; transform: translateY(14px) scale(.96); } }
-#ask {
+#ask, #notice {
   position: fixed; left: 10px; right: 10px; bottom: 12px; z-index: 5; padding: 11px 12px 10px; border-radius: 14px;
   background: linear-gradient(#141615f2, #141615f2) padding-box,
     conic-gradient(from var(--a), #39ff14, #c8ffb8, #ffffff, #00ff88, #39ff14) border-box;
@@ -60,7 +60,7 @@ header .sparkle {
 .ask-head .sparkle { width: 14px; height: 14px; margin: 0; background: conic-gradient(from var(--a), #39ff14, #c8ffb8, #ffffff, #00ff88, #39ff14);
   -webkit-mask: url(sparkle.svg) center / contain no-repeat; mask: url(sparkle.svg) center / contain no-repeat; }
 .ask-head .icon { margin-left: auto; }
-#ask-q { margin: 8px 0 10px; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
+#ask-q, #notice-q { margin: 8px 0 10px; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
 #ask-opts { display: flex; flex-direction: column; gap: 6px; }
 #ask-opts button { display: flex; gap: 8px; text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid #2d3a2a;
   background: #1a1f19; color: var(--text); font: inherit; cursor: pointer; }
@@ -71,4 +71,5 @@ header .sparkle {
   background: #0e120d; color: var(--text); font: inherit; outline: none; }
 #ask-in:focus { border-color: #39ff14; }
 .ask-send { height: 34px; padding: 0 12px; border: 0; border-radius: 9px; background: #39ff14; color: #062b00; font-weight: 650; cursor: pointer; }
-@media (prefers-reduced-motion: reduce) { #ask { animation: none; } }
+#notice-go { width: 100%; }
+@media (prefers-reduced-motion: reduce) { #ask, #notice { animation: none; } }

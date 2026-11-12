@@ -142,9 +142,10 @@ const tools = {
     await chrome.windows.update(t.windowId, { focused: true });
     return `active: ${t.title}`;
   },
-  async open_tab({ url, active = true }) {
+  async open_tab({ url, active = false }) {
     noFile(url);
     const t = await chrome.tabs.create({ url, active });
+    await intoAgentGroup(t);
     return { tabId: t.id, windowId: t.windowId };
   },
   async close_tab({ tabId }) { await chrome.tabs.remove(tabId); return 'closed'; },
@@ -192,45 +193,49 @@ const tools = {
       if (field) throw new Error('fields can only be filled on a web page');
       return answerText(await panelAsk({ question, options, placeholder }));
     }
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+    // Never pulls the user over: a question about a tab they are not looking at opens in the panel,
+    // and a field to fill waits on its page while the panel and the toolbar icon say where.
+    if (!field && !(await inView(tab))) return answerText(await withBadge(panelAsk({ question, options, placeholder })));
     if (field && !(await pointAtElement(tab.id, ref, selector, 'your turn'))) throw new Error('field not found; call read_page again');
+    const waiting = ui(tab.id, 'ask', { question, options: options || [], placeholder, ref, selector });
+    const away = field && !(await inView(tab)) ? panelNotice(`${question}\nOn the tab "${tab.title}".`, tab) : null;
     try {
-      return answerText(await ui(tab.id, 'ask', { question, options: options || [], placeholder, ref, selector }));
+      return answerText(await (away ? withBadge(waiting) : waiting));
     } catch (e) {
       // Pressing Enter in a login form usually submits it and loads a new page.
       if (field && /frame|navigat|closed|No tab/i.test(e.message)) return 'The page changed while the user was filling the field (they probably submitted it). Call read_page to check.';
       throw e;
+    } finally {
+      away?.();
     }
   },
   async screenshot({ tabId }) {
-    const t = await chrome.tabs.update(tabId, { active: true });
-    noFile(t.url);
-    await new Promise((r) => setTimeout(r, 400));
-    const url = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'jpeg', quality: 60 });
-    return { image: url.split(',')[1] };
+    const frames = await frameSource(tabId);
+    try { return { image: (await frames.grab()).split(',')[1] }; } finally { await frames.done(); }
   },
   // Watches a tab like a short video: frames over time, merged into one timeline image.
   // untilChange / untilText return the moment it happens, so the agent can react in a see-act loop.
   async watch({ tabId, seconds = 6, untilChange = false, untilText }) {
-    const t = await chrome.tabs.update(tabId, { active: true });
-    noFile(t.url);
-    await sleep(300);
+    const source = await frameSource(tabId);
     const sees = async () => (await chrome.scripting.executeScript({ target: { tabId }, func: (s) => !!document.body?.innerText.includes(s), args: [untilText] }))[0].result;
     let found = false;
     const t0 = Date.now(), end = t0 + Math.min(Math.max(seconds, 1), 30) * 1000;
     const frames = [];
     let last = null, captured = 0;
-    while (Date.now() < end) {
-      const shot = Date.now();
-      const url = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'jpeg', quality: 55 });
-      captured++;
-      // Same pixels encode to the same bytes: only frames where something moved are kept.
-      if (url !== last) frames.push({ url, at: (Date.now() - t0) / 1000 });
-      last = url;
-      if (untilChange && frames.length > 1) break;
-      if (untilText && (found = await sees().catch(() => false))) break;
-      await sleep(Math.max(0, 510 - (Date.now() - shot))); // Chrome allows two captures per second
+    try {
+      while (Date.now() < end) {
+        const shot = Date.now();
+        const url = await source.grab();
+        captured++;
+        // Same pixels encode to the same bytes: only frames where something moved are kept.
+        if (url !== last) frames.push({ url, at: (Date.now() - t0) / 1000 });
+        last = url;
+        if (untilChange && frames.length > 1) break;
+        if (untilText && (found = await sees().catch(() => false))) break;
+        await sleep(Math.max(0, 510 - (Date.now() - shot))); // Chrome allows two captures per second
+      }
+    } finally {
+      await source.done();
     }
     const image = await timeline(frames.length > WATCH_MAX ? pickEvenly(frames, WATCH_MAX) : frames);
     const changes = frames.slice(1).map((f) => `+${f.at.toFixed(1)}s`).join(', ');
@@ -240,6 +245,50 @@ const tools = {
     return { image, text };
   },
 };
+
+// Tabs the agent opens live in their own green "Chromiagent" group, apart from the user's tabs.
+async function intoAgentGroup(tab) {
+  if (!chrome.tabGroups) return; // extension not reloaded since the permission was added
+  try {
+    const [group] = await chrome.tabGroups.query({ windowId: tab.windowId, title: 'Chromiagent' });
+    const groupId = await chrome.tabs.group({ tabIds: [tab.id], ...(group ? { groupId: group.id } : { createProperties: { windowId: tab.windowId } }) });
+    if (!group) await chrome.tabGroups.update(groupId, { title: 'Chromiagent', color: 'green', collapsed: false });
+  } catch {} // a popup window or a browser without tab groups
+}
+
+// A tab the user can see right now: the selected tab of the focused, not minimized window.
+async function inView(tab) {
+  const win = await chrome.windows.get(tab.windowId);
+  return tab.active && win.focused && win.state !== 'minimized';
+}
+
+// Frames of a tab without switching to it: a tab in view is captured as shown, any other one
+// (a background tab, a window behind others) through the debugger, which renders it off screen.
+// The agent's own glow and pointer are hidden meanwhile: they would show up as changes in every frame.
+async function frameSource(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  noFile(tab.url);
+  const overlays = (shown) => chrome.scripting.executeScript({ target: { tabId }, args: [shown],
+    func: (v) => ['__chromiagent-glow', '__chromiagent-ui'].forEach((id) => { const e = document.getElementById(id); if (e) e.style.visibility = v ? '' : 'hidden'; }) }).catch(() => {});
+  await overlays(false);
+  if (await inView(tab)) {
+    return { grab: () => chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 }), done: () => overlays(true) };
+  }
+  const target = { tabId };
+  const own = !cdp.attachedTabs.has(tabId);
+  if (own) await chrome.debugger.attach(target, '1.3');
+  return {
+    grab: async () => `data:image/jpeg;base64,${(await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 55 })).data}`,
+    done: async () => { if (own) await chrome.debugger.detach(target).catch(() => {}); await overlays(true); },
+  };
+}
+
+// A "?" on the toolbar icon while the agent waits for the user, so it shows in every window.
+async function withBadge(promise) {
+  chrome.action.setBadgeBackgroundColor({ color: '#39ff14' });
+  chrome.action.setBadgeText({ text: '?' });
+  try { return await promise; } finally { chrome.action.setBadgeText({ text: '' }); }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const WATCH_MAX = 12;
@@ -292,7 +341,7 @@ async function connectBridge() {
     let out;
     try {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
-      glow(args?.tabId);
+      if (tool !== 'watch' && tool !== 'screenshot') glow(args?.tabId); // looking is not acting
       const r = await tools[tool](args);
       if (tool === 'open_tab') glow(r.tabId);
       out = r && r.image ? { id, image: r.image, result: r.text } : r && r.error ? { id, error: r.error } : { id, result: r };
