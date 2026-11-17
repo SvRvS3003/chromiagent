@@ -45,7 +45,14 @@ function pageAct(action, ref, selector, text, submit, dy) {
   if (!el) return { error: `element not found (${selector || 'ref ' + ref}); call read_page again` };
   el.scrollIntoView({ block: 'center' });
   if (action === 'click') {
-    for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+    const r = el.getBoundingClientRect();
+    const init = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+    el.dispatchEvent(new PointerEvent('pointerover', { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+    el.dispatchEvent(new MouseEvent('mouseover', init));
+    el.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: 1 }));
+    el.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+    el.dispatchEvent(new MouseEvent('mouseup', init));
     el.click();
     return 'clicked';
   }
@@ -104,7 +111,10 @@ async function pointAtElement(tabId, ref, selector, label) {
   if (p) await pointTo(tabId, p.x, p.y, label);
   return p;
 }
-chrome.tabs.onRemoved.addListener((tabId) => pointer.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  pointer.delete(tabId);
+  if (tabId === boundTab) setBound(null);
+});
 
 const ANSWERS = {
   text: (v) => `The user answered: ${v}`,
@@ -118,40 +128,81 @@ const answerText = (r) => {
   return (ANSWERS[r?.type] || ANSWERS.cancel)(r?.value);
 };
 
-// The agent works on the page the user is looking at: the active tab of this panel's window.
-// bind_tab is only an explicit override when the user points at a different tab; it is not persisted,
-// so a new panel session always starts on the page in front of the user.
+// An explicitly selected tab stays selected across panel/extension reloads. Every action focuses the
+// selected tab so the page, highlight and animated pointer remain visible together.
 let boundTab = null;
 async function activeTab() {
+  const [front] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (front && /^https?:/i.test(front.url || '')) return front.id;
   const { windowId } = await panelReady;
   const [tab] = await chrome.tabs.query({ active: true, windowId });
   if (tab && /^https?:/i.test(tab.url || '')) return tab.id;
-  const [front] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (front && /^https?:/i.test(front.url || '')) return front.id;
   throw new Error('no web page is open in front of you: switch to the page you want me to work on');
 }
-async function setBound(tabId) { boundTab = tabId; } // explicit, in-memory only
-// Explicit tabId wins; otherwise the user's open page. Never silently work in a hidden tab.
+async function setBound(tabId) {
+  boundTab = tabId ?? null;
+  try {
+    const { windowId } = await panelReady;
+    const key = `bound:${windowId}`;
+    if (boundTab == null) await chrome.storage.local.remove(key);
+    else await chrome.storage.local.set({ [key]: boundTab });
+  } catch {} // storage may be unavailable on restricted or older extension installs
+}
+async function getBound() {
+  if (boundTab != null) return boundTab;
+  try {
+    const { windowId } = await panelReady;
+    const key = `bound:${windowId}`;
+    const id = (await chrome.storage.local.get(key))[key];
+    if (typeof id === 'number') { await chrome.tabs.get(id); boundTab = id; return id; }
+    if (id != null) await chrome.storage.local.remove(key);
+  } catch { await setBound(null); }
+  return null;
+}
+async function focusTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  const win = await chrome.windows.get(tab.windowId);
+  if (win.state === 'minimized') await chrome.windows.update(win.id, { state: 'normal' });
+  await chrome.tabs.update(tabId, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return tab;
+}
+// Explicit tabId wins; otherwise follow the persistent binding or the active page. Never act in a
+// hidden tab: focus it first so page actions and cursor animation are visible to the user.
 async function tabArg(args = {}) {
-  const id = args.tabId ?? boundTab ?? await activeTab();
-  try { await chrome.tabs.get(id); } catch { if (id === boundTab) boundTab = null; throw new Error(`tab ${id} is gone; call list_tabs`); }
+  const explicit = args.tabId != null;
+  let id = explicit ? args.tabId : await getBound();
+  if (id == null) id = await activeTab();
+  try { await focusTab(id); }
+  catch {
+    if (explicit) throw new Error(`tab ${id} is gone; call list_tabs`);
+    await setBound(null);
+    id = await activeTab();
+    await focusTab(id);
+  }
+  if (explicit) await setBound(id);
   return id;
 }
 
 const tools = {
   async list_tabs() {
     const mine = await mineSet();
+    const bound = await getBound();
     const tabs = await chrome.tabs.query({});
-    return tabs.map((t) => ({ tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: mine.has(t.id) || undefined, bound: t.id === boundTab || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined }));
+    return tabs.map((t) => ({ tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: mine.has(t.id) || undefined, bound: t.id === bound || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined }));
   },
   async bind_tab({ tabId }) {
-    const t = await chrome.tabs.get(tabId);
+    const t = await focusTab(tabId);
     await setBound(tabId);
-    return `working in "${t.title}" (${t.url}) — the page the user pointed at. Without an explicit tabId the tools act here; say "shu ochiq sahifa" to go back to the page in front.`;
+    return `selected and focused "${t.title}" (${t.url}); I'll keep using this tab until you bind another tab or call unbind_tab`;
+  },
+  async unbind_tab() {
+    await setBound(null);
+    return 'tab selection cleared; following the active page';
   },
   async activate_tab({ tabId }) {
-    const t = await chrome.tabs.update(tabId, { active: true });
-    await chrome.windows.update(t.windowId, { focused: true });
+    const t = await focusTab(tabId);
+    await setBound(tabId);
     return `active: ${t.title}`;
   },
   async open_tab({ url, active = true }) {
@@ -159,6 +210,7 @@ const tools = {
     // Opens in front: the agent works on the page the user can see, never in a hidden tab.
     const t = await chrome.tabs.create({ url, active: true });
     await markMine(t.id);
+    await setBound(t.id);
     return { tabId: t.id, windowId: t.windowId, active: true };
   },
   async close_tab({ tabId }) {
@@ -179,16 +231,20 @@ const tools = {
   },
   read_page: ({ tabId, maxChars }) => inPage(tabId, pageSnapshot, [maxChars || 15000]),
   async click({ tabId, ref, selector }) {
-    await pointAtElement(tabId, ref, selector, 'click');
-    const r = await inPage(tabId, pageAct, ['click', ref ?? null, selector ?? null, null, false, 0]);
-    if (r === 'clicked') pressAt(tabId);
-    return r;
+    const p = await pointAtElement(tabId, ref, selector, 'click');
+    if (!p) return { error: `element not found (${selector || 'ref ' + ref}); call read_page again` };
+    await pressAt(tabId);
+    return inPage(tabId, pageAct, ['click', ref ?? null, selector ?? null, null, false, 0]);
   },
   async type({ tabId, ref, selector, text, submit }) {
     await pointAtElement(tabId, ref, selector, 'typing');
     return inPage(tabId, pageAct, ['type', ref ?? null, selector ?? null, text, !!submit, 0]);
   },
-  scroll: ({ tabId, dy }) => inPage(tabId, pageAct, ['scroll', null, null, null, false, dy]),
+  async scroll({ tabId, dy }) {
+    const p = await inPage(tabId, () => ({ x: Math.round(innerWidth * 0.72), y: Math.round(innerHeight * 0.78) }));
+    await pointTo(tabId, p.x, p.y, 'scrolling');
+    return inPage(tabId, pageAct, ['scroll', null, null, null, false, dy]);
+  },
   // The pointer's human arc, for drags and chess moves: scan a friendly piece or two, glide in, dwell,
   // press, glide out, rest nearby. Runs through the extension so the pointer is what the user sees.
   async pointer_stroke({ tabId, from, to, decoys, color, label }) {
@@ -441,6 +497,8 @@ const TABBED = new Set(['activate_tab', 'close_tab', 'navigate', 'read_page', 'c
 
 async function connectBridge() {
   const ws = new WebSocket(`ws://127.0.0.1:17371/bridge?panel=${(await panelReady).id}`);
+  ws.onopen = () => panelReady.then(({ id }) => console.info(`[chromiagent] bridge connected; panel=${id}`));
+  ws.onerror = (e) => console.error('[chromiagent] bridge websocket error', e);
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data);
     if (msg.cdpOpen) return cdp.open((m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ cdp: m })));
@@ -452,11 +510,12 @@ async function connectBridge() {
       if (!tools[tool]) throw new Error(`unknown tool ${tool}`);
       const a = TABBED.has(tool) ? { ...(args || {}), tabId: await tabArg(args || {}) } : { ...(args || {}) };
       if (tool === 'ask_user' && a.tabId == null && boundTab != null) a.tabId = boundTab;
-      if (!['watch', 'screenshot', 'monitor', 'events'].includes(tool)) glow(a?.tabId); // looking is not acting
+      if (!['watch', 'screenshot', 'monitor', 'events'].includes(tool)) await glow(a?.tabId); // show the active page before acting
       const r = await tools[tool](a);
-      if (tool === 'open_tab') glow(r.tabId);
+      if (tool === 'open_tab') await glow(r.tabId);
       out = r && r.image ? { id, image: r.image, result: r.text } : r && r.error ? { id, error: r.error } : { id, result: r };
     } catch (err) {
+      console.error(`[chromiagent] ${tool} failed on tab ${args?.tabId ?? 'active'}:`, err);
       out = { id, error: String(err.message || err) };
     }
     ws.send(JSON.stringify(out));

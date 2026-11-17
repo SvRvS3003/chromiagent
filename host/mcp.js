@@ -10,9 +10,11 @@ const TARGET = {
 };
 const TOOLS = [
   ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). The agent normally works in the active tab; `bound` is the explicit override from bind_tab.', {}, []],
+  ['bridge_status', 'Show whether the extension control socket and browser panel bridge are connected, including pending reopen attempts.', {}, []],
   ['open_panel', 'Reopen the Chromiagent panel if it is closed: this reconnects the browser bridge and restores every chrome.* tool. Normally automatic — call it only if a tool says the panel is closed.', {}, []],
   ['open_tab', 'Open a new tab IN FRONT and work there — the agent only works on the page the user can see. Opens in the foreground even if `active` is omitted.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
-  ['bind_tab', 'Work in this specific tab: use it only when the user points at a tab that is not in front. Otherwise tools act on the open page automatically. Do not use it to hide work in the background.', TAB, ['tabId']],
+  ['bind_tab', 'Select this tab and bring it to the foreground. The selection persists across panel and extension reloads until unbind_tab or another bind_tab.', TAB, ['tabId']],
+  ['unbind_tab', 'Clear the selected tab and follow the active page again.', {}, []],
   ['activate_tab', 'Bring a tab to front and focus its window — then it becomes the page the agent works on.', TAB, []],
   ['close_tab', 'Close a tab.', TAB, ['tabId']],
   ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, []],

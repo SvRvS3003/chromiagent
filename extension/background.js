@@ -24,11 +24,21 @@ async function reopenPanel() {
 function connectControl() {
   try {
     const ws = new WebSocket('ws://127.0.0.1:17371/control');
-    ws.onopen = () => { control = ws; };
-    ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m.action === 'open_panel') reopenPanel(); };
-    ws.onclose = () => { if (control === ws) control = null; setTimeout(connectControl, 1500); };
-    ws.onerror = () => { try { ws.close(); } catch {} };
+    ws.onopen = () => { control = ws; console.info('[chromiagent] host control connected'); };
+    ws.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.action === 'open_panel') { console.info('[chromiagent] host requested panel reopen'); reopenPanel(); }
+    };
+    ws.onclose = () => { if (control === ws) control = null; console.warn('[chromiagent] host control disconnected; retrying'); setTimeout(connectControl, 1500); };
+    ws.onerror = (e) => { console.error('[chromiagent] host control websocket error', e); try { ws.close(); } catch {} };
   } catch { setTimeout(connectControl, 2000); }
 }
 connectControl();
 chrome.runtime.onStartup?.addListener(connectControl);
+chrome.runtime.onStartup?.addListener(async () => {
+  try {
+    const stored = await chrome.storage.local.get(null);
+    const obsolete = Object.keys(stored).filter((key) => key.startsWith('bound:'));
+    if (obsolete.length) await chrome.storage.local.remove(obsolete);
+  } catch (e) { console.warn('[chromiagent] could not clear old tab bindings', e); }
+});

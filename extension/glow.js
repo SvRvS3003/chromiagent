@@ -46,11 +46,11 @@ function glowOff() {
 }
 
 // Call on every agent action on a tab; the glow stays while actions keep coming.
-function glow(tabId) {
+async function glow(tabId) {
   if (typeof tabId !== 'number') return;
   const timer = glowTimers.get(tabId);
   if (timer) clearTimeout(timer);
-  else chrome.scripting.executeScript({ target: { tabId }, func: glowOn }).catch(() => {}); // chrome://, file:// or closed tab
+  else await chrome.scripting.executeScript({ target: { tabId }, func: glowOn }).catch(() => {}); // chrome://, file:// or closed tab
   glowTimers.set(tabId, setTimeout(() => {
     glowTimers.delete(tabId);
     chrome.scripting.executeScript({ target: { tabId }, func: glowOff }).catch(() => {});

@@ -171,6 +171,7 @@ const pending = new Map();    // relay id -> { ws, id }
 let seq = 0;
 
 const isOpen = (ws) => ws && ws.readyState === ws.OPEN;
+const linkLog = (event, details = {}) => console.info(`[chromiagent] ${event} ${JSON.stringify(details)}`);
 // With a panel id: that panel's bridge or nothing. Without one: the most recent panel.
 const bridgeFor = (panel) => (panel ? bridges.get(panel) : latestBridge);
 const notOpen = (panel) => (panel ? 'The Chromiagent panel this agent was started from is closed. Reopen the panel.' : 'Chromiagent side panel is not open in Chrome.');
@@ -199,6 +200,7 @@ async function ensureBridge(panel) {
       if (isOpen(bridge)) return bridge;
     }
     pendingReopen.delete(key);
+    linkLog('bridge reopen timed out', { panel: key || null, controls: [...controls].filter(isOpen).length });
     return null;
   })();
   reopening.set(key, attempt);
@@ -208,8 +210,9 @@ async function ensureBridge(panel) {
 
 function onControl(ws) {
   controls.add(ws);
-  ws.on('close', () => controls.delete(ws));
-  ws.on('error', () => controls.delete(ws));
+  linkLog('extension control connected', { controls: controls.size });
+  ws.on('close', () => { controls.delete(ws); linkLog('extension control closed', { controls: controls.size }); });
+  ws.on('error', (e) => { controls.delete(ws); linkLog('extension control error', { message: e.message }); });
   ws.on('message', () => {}); // the channel is host -> extension only
 }
 
@@ -227,8 +230,10 @@ wss.on('connection', (ws, req) => {
 function onBridge(ws, panel) {
   if (panel) bridges.set(panel, ws);
   // A freshly reopened panel gets a fresh id; the agent still uses its original one.
-  for (const old of pendingReopen) { bridges.set(old, ws); pendingReopen.delete(old); }
+  const aliases = [...pendingReopen];
+  for (const old of aliases) { bridges.set(old, ws); pendingReopen.delete(old); }
   latestBridge = ws;
+  linkLog('panel bridge connected', { panel, aliases });
   ws.cdpClient = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
@@ -243,6 +248,7 @@ function onBridge(ws, panel) {
     // alias together; otherwise a closed socket can remain the fallback for unbound MCP clients.
     for (const [id, bridge] of bridges) if (bridge === ws) bridges.delete(id);
     if (latestBridge === ws) latestBridge = [...new Set(bridges.values())].reverse().find(isOpen) || null;
+    linkLog('panel bridge closed', { panel });
     if (ws.cdpClient) ws.cdpClient.close(1011, 'Chromiagent panel closed');
   });
 }
@@ -253,12 +259,25 @@ function onMcp(ws, panel) {
   });
   ws.on('message', async (raw) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
+    if (msg.tool === 'bridge_status') {
+      const uniqueBridges = [...new Set(bridges.values())];
+      return ws.send(JSON.stringify({ id: msg.id, result: {
+        host: 'connected',
+        controls: [...controls].filter(isOpen).length,
+        bridges: uniqueBridges.filter(isOpen).length,
+        panelConnected: isOpen(bridgeFor(panel)),
+        pendingReopen: [...pendingReopen],
+      } }));
+    }
     if (msg.tool === 'open_panel') {
       const bridge = await ensureBridge(panel);
       return ws.send(JSON.stringify({ id: msg.id, result: isOpen(bridge) ? 'the panel is open and connected' : notOpen(panel) }));
     }
     const bridge = await ensureBridge(panel);
-    if (!isOpen(bridge)) return ws.send(JSON.stringify({ id: msg.id, error: notOpen(panel) }));
+    if (!isOpen(bridge)) {
+      linkLog('MCP request has no panel bridge', { panel: panel || null, tool: msg.tool, controls: [...controls].filter(isOpen).length });
+      return ws.send(JSON.stringify({ id: msg.id, error: notOpen(panel) }));
+    }
     const rid = ++seq;
     pending.set(rid, { ws, id: msg.id });
     bridge.send(JSON.stringify({ id: rid, tool: msg.tool, args: msg.args || {} }));

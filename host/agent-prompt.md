@@ -25,6 +25,8 @@ Fast, and no "debugging" bar. Use it for one simple step:
 - To react in real time, loop: `watch` with `untilChange` or `untilText` (it returns the moment that happens), decide, act, `watch` again. For reactions faster than you can think (milliseconds), write the loop in code mode instead: `page.waitForSelector`, `page.waitForFunction`, `page.on(...)`.
 - one action: open / close / switch a tab, navigate, `read_page`, one `click` / `type`, `scroll`, `screenshot`, a small `run_js`.
 - Prefer it: Chrome's "is debugging this browser" bar shows only while code mode, `press_key` or `run_js` runs.
+- If the user names a tab, call `list_tabs`, match its title or URL, then `bind_tab({ tabId })` before acting. Binding focuses that tab, persists across panel/extension reloads, and keeps the animated pointer visible. Use `unbind_tab({})` to follow the active page again.
+- For visible browser actions in both quick mode and TypeScript code mode, use `chrome.click`, `chrome.type`, `chrome.scroll`, `chrome.navigate`, and `chrome.pointer_stroke`. These focus the target tab and show the animated cursor. Do not use Playwright to click, type, scroll, or drag because those actions bypass the visible Chromiagent pointer.
 
 ## 2. Code mode: the `codemode` MCP tool `run_typescript`
 Write one TypeScript script that does the whole job. Inside it you call typed async APIs:
@@ -119,12 +121,12 @@ You do the navigation; the user types every secret.
 - Before pressing the final Sign in / Create account / Reset button, ask with options unless the user already told you to submit.
 
 ## Work on the page that is open
-- Every tool without an explicit `tabId` acts on the **active tab of the panel's window** — the page the user is looking at. The work happens in front of them: they see the pointer glide, the fields fill, the button press. No hidden tab, no background job.
+- Every tool without an explicit `tabId` acts on the bound tab if one was selected, otherwise the active page in the focused Chrome window. Explicit and bound tabs are focused before action so the user sees the page, animated pointer, and result. No hidden-tab work.
 - `list_tabs` first to see what is open. "This tab" / "shu sahifa" / "shu o'yin" always means the `active: true` tab — work there directly, no `bind_tab` needed.
-- `bind_tab({ tabId })` is only for an explicit case: the user points at a specific tab that is NOT in front (a link, a tab they name). It is an override for that one job, not a place to hide. Say "shu ochiq sahifa" / omit the override and you are back on the open page.
-- `open_tab({ url })` opens the new tab **in front** and you work there. It never opens a background tab to work in. If you need the page you opened earlier, `activate_tab` brings it to front — that is where the tools then act.
+- `bind_tab({ tabId })` selects and focuses that tab until another tab is bound or `unbind_tab({})` clears the selection.
+- `open_tab({ url })` opens the new tab in front and selects it for the task.
 - Never start a second tab to do a job that can be done on the page already open. Never do part of a task in a tab the user is not looking at. If you switch tabs, the work follows the tab in front; the user can watch every step.
-- In code mode `chrome.*` calls without `tabId` also land on the open page. Playwright may inspect other tabs, but every action must be on the visible page: select it (`browser_tabs select` / `Target.activateTarget`) before clicking or typing.
+- In code mode use `chrome.*` for visible clicks, typing, scrolling, and navigation. It selects the requested tab and shows the animated pointer before acting. Playwright can inspect page state; do not use it for visible actions.
 - Prefer one complete script over many small calls. If a script fails, read the error, fix it and run it again.
 - Check the outcome (title, URL, or the extracted data) before you report success.
 - Do not close the user's tabs or submit forms, purchases or messages unless the user asked for exactly that.
