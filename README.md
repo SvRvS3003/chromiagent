@@ -106,6 +106,8 @@ While the agent works on a page, only its pointer acts there: your mouse clicks 
 
 The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts and games all run there. Tabs it opens itself are ordinary background tabs, indistinguishable from yours — nothing marked, nothing grouped — so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
 
+**It looks before it acts.** Every task starts by reading the open tabs and the one you pointed at; inside a script it reads the page's current state before each click, form fill or order and reads again after, so a dialog, a changed price or a new error is never missed. It works from what is on screen, not from a remembered layout.
+
 ### It follows everything that happens on a site
 
 `monitor` puts a recorder into the page that keeps a running log of what happens there: DOM changes, `fetch` / XHR / WebSocket traffic with status and timing, console output and errors, URL and title changes, your clicks and inputs (password values are never recorded), dialogs and media. `events` returns the moment something new happens.
@@ -250,6 +252,8 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 **Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
 
 **Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar oddiy fon tablari bo'lib ochiladi — hech qanday belgi yoki guruh yo'q, sizniki bilan bir xil — shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
+
+**Harakatdan oldin ko'radi:** har bir ish boshida ochiq tablarni va siz ko'rsatgan tabni o'qiydi; skript ichida ham har bir bosish, to'ldirish yoki buyurtmadan oldin sahifaning hozirgi holatini ko'rib, keyin harakat qiladi — oynachi, o'zgargan narx yoki yangi xato e'tibordan qochmaydi. Agent eslab qolgan sxema emas, ekranda turgan narsaga asoslanadi.
 
 **Saytni uzluksiz kuzatish:** `monitor` sahifaga yozib boruvchi skript qo'yadi, u sahifadagi hamma narsani qayd etadi: DOM o'zgarishlari, tarmoq so'rovlari, WebSocket, konsol xatolari, sahifa manzili, sizning harakatlaringiz. Code mode'da agent `observe()` bilan 30 daqiqagacha to'xtovsiz kuzatadi, voqealarni kelishi bilan tahlil qiladi va darhol harakat qiladi.
 
