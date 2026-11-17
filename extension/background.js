@@ -27,6 +27,7 @@ function connectControl() {
     ws.onopen = () => { control = ws; console.info('[chromiagent] host control connected'); };
     ws.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.action === 'keepalive') { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: 'keepalive_ack', at: Date.now() })); return; }
       if (m.action === 'open_panel') { console.info('[chromiagent] host requested panel reopen'); reopenPanel(); }
     };
     ws.onclose = () => { if (control === ws) control = null; console.warn('[chromiagent] host control disconnected; retrying'); setTimeout(connectControl, 1500); };

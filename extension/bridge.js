@@ -131,13 +131,32 @@ const answerText = (r) => {
 // An explicitly selected tab stays selected across panel/extension reloads. Every action focuses the
 // selected tab so the page, highlight and animated pointer remain visible together.
 let boundTab = null;
+let lastWebTab = null;
+const isWebTab = (t) => !!t && /^https?:/i.test(t.url || '');
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId).then((t) => { if (isWebTab(t)) lastWebTab = tabId; }).catch(() => {});
+});
+(async () => {
+  try {
+    const tabs = await chrome.tabs.query({});
+    const web = tabs.filter(isWebTab);
+    lastWebTab = (web.find((t) => t.active) || web[web.length - 1])?.id ?? null;
+  } catch {}
+})();
 async function activeTab() {
   const [front] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (front && /^https?:/i.test(front.url || '')) return front.id;
+  if (isWebTab(front)) return front.id;
   const { windowId } = await panelReady;
   const [tab] = await chrome.tabs.query({ active: true, windowId });
-  if (tab && /^https?:/i.test(tab.url || '')) return tab.id;
-  throw new Error('no web page is open in front of you: switch to the page you want me to work on');
+  if (isWebTab(tab)) return tab.id;
+  // The front page is not a web page (the panel itself as a tab, chrome://extensions, DevTools):
+  // fall back to the most recent web tab instead of failing every tool with "manifest must request permission".
+  if (lastWebTab != null) {
+    try { const t = await chrome.tabs.get(lastWebTab); if (isWebTab(t)) return lastWebTab; } catch { lastWebTab = null; }
+  }
+  const webs = (await chrome.tabs.query({ windowId })).filter(isWebTab);
+  if (webs.length) return webs[webs.length - 1].id;
+  throw new Error('no web page is open in this window: open the page you want me to work on first');
 }
 async function setBound(tabId) {
   boundTab = tabId ?? null;

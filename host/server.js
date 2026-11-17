@@ -173,7 +173,20 @@ let seq = 0;
 const isOpen = (ws) => ws && ws.readyState === ws.OPEN;
 const linkLog = (event, details = {}) => console.info(`[chromiagent] ${event} ${JSON.stringify(details)}`);
 // With a panel id: that panel's bridge or nothing. Without one: the most recent panel.
-const bridgeFor = (panel) => (panel ? bridges.get(panel) : latestBridge);
+const bridgeFor = (panel) => {
+  if (!panel) return latestBridge;
+  const exact = bridges.get(panel);
+  if (isOpen(exact)) return exact;
+  // An extension reload can replace the panel UUID while the old agent process is still alive.
+  // Rebind only when there is exactly one live bridge, never guess between multiple windows/profiles.
+  const live = [...new Set(bridges.values())].filter(isOpen);
+  if (live.length === 1) {
+    bridges.set(panel, live[0]);
+    linkLog('rebound stale panel id to unique live bridge', { panel });
+    return live[0];
+  }
+  return null;
+};
 const notOpen = (panel) => (panel ? 'The Chromiagent panel this agent was started from is closed. Reopen the panel.' : 'Chromiagent side panel is not open in Chrome.');
 
 // A closed panel must not blind the agent: ask the extension's service worker to reopen it, then
@@ -211,8 +224,17 @@ async function ensureBridge(panel) {
 function onControl(ws) {
   controls.add(ws);
   linkLog('extension control connected', { controls: controls.size });
-  ws.on('close', () => { controls.delete(ws); linkLog('extension control closed', { controls: controls.size }); });
-  ws.on('error', (e) => { controls.delete(ws); linkLog('extension control error', { message: e.message }); });
+  const heartbeat = setInterval(() => {
+    if (isOpen(ws)) ws.send(JSON.stringify({ action: 'keepalive', at: Date.now() }));
+  }, 20000);
+  heartbeat.unref?.();
+  const remove = (event, details = {}) => {
+    clearInterval(heartbeat);
+    controls.delete(ws);
+    linkLog(event, { ...details, controls: controls.size });
+  };
+  ws.on('close', () => remove('extension control closed'));
+  ws.on('error', (e) => remove('extension control error', { message: e.message }));
   ws.on('message', () => {}); // the channel is host -> extension only
 }
 
@@ -265,7 +287,8 @@ function onMcp(ws, panel) {
         host: 'connected',
         controls: [...controls].filter(isOpen).length,
         bridges: uniqueBridges.filter(isOpen).length,
-        panelConnected: isOpen(bridgeFor(panel)),
+        panelConnected: !!isOpen(bridgeFor(panel)),
+        panelIds: [...bridges.keys()],
         pendingReopen: [...pendingReopen],
       } }));
     }
