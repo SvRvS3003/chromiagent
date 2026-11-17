@@ -46,21 +46,37 @@ const TOOLS = [
 ].map(([name, description, properties, required]) => ({ name, description, inputSchema: { type: 'object', properties, required } }));
 
 let ws = null;
+let connecting = null;
 let seq = 0;
 const waiting = new Map();
 
 function connect() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) return resolve(ws);
-    const s = new WebSocket(`ws://127.0.0.1:17371/mcp?panel=${process.env.CHROMIAGENT_PANEL || ''}`);
-    s.on('open', () => { ws = s; resolve(s); });
-    s.on('error', reject);
-    s.on('message', (raw) => {
-      const msg = JSON.parse(raw);
-      const w = waiting.get(msg.id);
-      if (w) { waiting.delete(msg.id); w(msg); }
+    if (connecting) return connecting.then(resolve, reject);
+    connecting = new Promise((connected, failed) => {
+      const s = new WebSocket(`ws://127.0.0.1:17371/mcp?panel=${process.env.CHROMIAGENT_PANEL || ''}`);
+      let settled = false;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        if (connecting) connecting = null;
+        if (err) failed(err); else connected(s);
+      };
+      s.on('open', () => { ws = s; finish(); });
+      s.on('error', (e) => finish(e));
+      s.on('message', (raw) => {
+        let msg; try { msg = JSON.parse(raw); } catch { return; }
+        const w = waiting.get(msg.id);
+        if (w) { waiting.delete(msg.id); w(msg); }
+      });
+      s.on('close', () => {
+        if (ws === s) ws = null;
+        finish(new Error('Chromiagent host connection closed'));
+        for (const [id, w] of waiting) { waiting.delete(id); w({ error: 'Chromiagent host connection closed' }); }
+      });
     });
-    s.on('close', () => { if (ws === s) ws = null; });
+    connecting.then(resolve, reject);
   });
 }
 
@@ -100,6 +116,9 @@ process.stdin.on('data', (chunk) => {
   while ((i = buf.indexOf('\n')) >= 0) {
     const line = buf.slice(0, i).trim();
     buf = buf.slice(i + 1);
-    if (line) handle(JSON.parse(line));
+    if (line) {
+      try { handle(JSON.parse(line)); }
+      catch (e) { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: `Invalid JSON input: ${e.message}` } }) + '\n'); }
+    }
   }
 });

@@ -166,6 +166,7 @@ const bridges = new Map();    // panel id -> bridge socket
 let latestBridge = null;      // for tools started outside a panel terminal
 const controls = new Set();   // extension service-worker sockets, alive even when the panel is closed
 const pendingReopen = new Set(); // panel ids whose agent asked for the panel to be reopened
+const reopening = new Map();     // panel id -> shared in-flight reopen attempt
 const pending = new Map();    // relay id -> { ws, id }
 let seq = 0;
 
@@ -179,16 +180,30 @@ const notOpen = (panel) => (panel ? 'The Chromiagent panel this agent was starte
 async function ensureBridge(panel) {
   let bridge = bridgeFor(panel);
   if (isOpen(bridge)) return bridge;
-  if (controls.size) {
-    pendingReopen.add(panel || '');
-    for (const c of controls) if (isOpen(c)) c.send(JSON.stringify({ action: 'open_panel' }));
+  const key = panel || '';
+  if (reopening.has(key)) return reopening.get(key);
+  const attempt = (async () => {
+    pendingReopen.add(key);
+    const notified = new Set();
+    // The extension service worker can be reconnecting after a reload. Keep checking for it
+    // while waiting, and notify each live control socket once instead of failing immediately.
     for (let i = 0; i < 40; i++) {
+      for (const c of controls) {
+        if (isOpen(c) && !notified.has(c)) {
+          notified.add(c);
+          try { c.send(JSON.stringify({ action: 'open_panel' })); } catch {}
+        }
+      }
       await new Promise((r) => setTimeout(r, 250));
       bridge = bridgeFor(panel);
       if (isOpen(bridge)) return bridge;
     }
-  }
-  return null;
+    pendingReopen.delete(key);
+    return null;
+  })();
+  reopening.set(key, attempt);
+  try { return await attempt; }
+  finally { if (reopening.get(key) === attempt) reopening.delete(key); }
 }
 
 function onControl(ws) {
@@ -224,13 +239,18 @@ function onBridge(ws, panel) {
     isOpen(p.ws) && p.ws.send(JSON.stringify({ ...msg, id: p.id }));
   });
   ws.on('close', () => {
-    if (bridges.get(panel) === ws) bridges.delete(panel);
-    if (latestBridge === ws) latestBridge = [...bridges.values()].pop() || null;
+    // A bridge can be indexed by its current id and by one or more old agent ids. Remove every
+    // alias together; otherwise a closed socket can remain the fallback for unbound MCP clients.
+    for (const [id, bridge] of bridges) if (bridge === ws) bridges.delete(id);
+    if (latestBridge === ws) latestBridge = [...new Set(bridges.values())].reverse().find(isOpen) || null;
     if (ws.cdpClient) ws.cdpClient.close(1011, 'Chromiagent panel closed');
   });
 }
 
 function onMcp(ws, panel) {
+  ws.on('close', () => {
+    for (const [id, p] of pending) if (p.ws === ws) pending.delete(id);
+  });
   ws.on('message', async (raw) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
     if (msg.tool === 'open_panel') {
