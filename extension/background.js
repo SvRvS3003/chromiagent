@@ -13,13 +13,21 @@ if (chrome.sidePanel?.setPanelBehavior) {
 // local host still has a way to ask us to open it again. The agent never has to ask the user.
 let control = null;
 async function reopenPanel() {
+  if (!chrome.sidePanel?.open) {
+    console.warn('[chromiagent] this browser has no side-panel API; open Chromiagent from its toolbar button');
+    return false;
+  }
   try {
-    if (chrome.sidePanel?.open) {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab?.id) { await chrome.sidePanel.open({ tabId: tab.id }); return; }
-    }
-  } catch {} // a user gesture is required in some versions — fall through to a plain panel tab
-  try { await chrome.tabs.create({ url: chrome.runtime.getURL('panel.html'), active: false }); } catch {}
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id) throw new Error('no active browser tab');
+    await chrome.sidePanel.open({ tabId: tab.id });
+    return true;
+  } catch (e) {
+    // Chrome may require a user gesture. Keep the extension in its side panel; never open panel.html
+    // as a standalone browser tab as a workaround.
+    console.warn('[chromiagent] Chrome did not allow programmatic panel reopen; use the toolbar button', e);
+    return false;
+  }
 }
 function connectControl() {
   try {
