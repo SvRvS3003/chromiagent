@@ -2,18 +2,18 @@
 // Chromiagent MCP server, by SvRvS: gives the agent tools for every open Chrome tab, via the side panel bridge.
 const WebSocket = require('ws');
 
-const TAB = { tabId: { type: 'number', description: 'Tab id from list_tabs. Leave it out to work in your bound tab (open_tab / bind_tab)' } };
+const TAB = { tabId: { type: 'number', description: 'Tab id from list_tabs. Leave it out to work on the open page (or the tab explicitly bound with bind_tab)' } };
 const TARGET = {
   ...TAB,
   ref: { type: 'number', description: 'Element number from read_page' },
   selector: { type: 'string', description: 'CSS selector (alternative to ref)' },
 };
 const TOOLS = [
-  ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). mine: a tab you opened; bound: the tab you are working in. The user\'s own tabs are the ones without mine.', {}, []],
+  ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). The agent normally works in the active tab; `bound` is the explicit override from bind_tab.', {}, []],
   ['open_panel', 'Reopen the Chromiagent panel if it is closed: this reconnects the browser bridge and restores every chrome.* tool. Normally automatic — call it only if a tool says the panel is closed.', {}, []],
-  ['open_tab', 'Open a new tab in the background (the user stays where they are) and make it your working tab. active: true only if the user asked to see it.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
-  ['bind_tab', 'Work in this tab from now on: the user switching between their tabs does not move your target. Omit tabId afterwards and the tools act here. Use it when the user points at a tab ("this page", "shu tab"), and to switch between several jobs.', TAB, ['tabId']],
-  ['activate_tab', 'Switch to a tab and focus its window. Only when the user asked to see it.', TAB, []],
+  ['open_tab', 'Open a new tab IN FRONT and work there — the agent only works on the page the user can see. Opens in the foreground even if `active` is omitted.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
+  ['bind_tab', 'Work in this specific tab: use it only when the user points at a tab that is not in front. Otherwise tools act on the open page automatically. Do not use it to hide work in the background.', TAB, ['tabId']],
+  ['activate_tab', 'Bring a tab to front and focus its window — then it becomes the page the agent works on.', TAB, []],
   ['close_tab', 'Close a tab.', TAB, ['tabId']],
   ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, []],
   ['read_page', 'Read a tab: title, url, visible text, and numbered interactive elements (use the numbers as ref).', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, []],

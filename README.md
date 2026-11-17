@@ -102,9 +102,9 @@ The agent has its own pointer, separate from your mouse, in the logo's animated 
 
 While the agent works on a page, only its pointer acts there: your mouse clicks on that page are held back and your cursor shows a "not allowed" sign, so the two never get mixed up. Press `Esc` to take your mouse back at once; it also comes back by itself a moment after the agent stops. Other tabs and windows are yours as usual.
 
-### It works in the background, in its own tabs
+### It works on the open page
 
-The agent never pulls you to its tab, and it never follows you either: it works in one tab of its own (`open_tab`, or `bind_tab` for a tab you point at), and you switching tabs never moves it. Switch to another tab or window and it keeps working where it is: clicks, typing, Playwright scripts and games all run there. Tabs it opens itself are ordinary background tabs, indistinguishable from yours — nothing marked, nothing grouped — so its pointer and your mouse stay on different pages. When it needs you about a tab you are not on, the question opens in the panel and the toolbar icon shows **?**.
+The agent works on the page you have open. Every action without an explicit tab happens in the active tab — the one in front of you — so you see the pointer glide, the fields fill and the buttons press. `open_tab` brings a new page to front; `bind_tab` is only for a tab you point at that is not in front. Nothing runs in a hidden tab, and no job continues in a tab you have left. When it needs you about a page, the card opens right there next to its pointer.
 
 **It looks before it acts.** Every task starts by reading the open tabs and the one you pointed at; inside a script it reads the page's current state before each click, form fill or order and reads again after, so a dialog, a changed price or a new error is never missed. It works from what is on screen, not from a remembered layout.
 
@@ -192,7 +192,7 @@ Playwright connects to **your real, logged-in Chrome**, not to a separate browse
 | Tool | What it does |
 |---|---|
 | `list_tabs` | Every open tab in every window: id, title, URL, active, playing audio, and which one is the agent's (`mine`, `bound`) |
-| `open_tab` · `bind_tab` | Open a tab in the background and work in it, or pick the tab you already have open: the agent's target stops moving when you switch |
+| `open_tab` · `bind_tab` | Open a new page in front and work there, or override to a specific tab you point at — otherwise the agent works on the page in front of you |
 | `activate_tab` · `close_tab` | Switch to a tab when you ask to see it, close one |
 | `navigate` | Load a URL, go back or forward, reload |
 | `read_page` | Page text, plus numbered buttons, links and inputs it can act on |
@@ -253,7 +253,7 @@ Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamd
 
 **Faqat agent kursori:** agent sahifada ishlayotganda o'sha sahifada faqat uning kursori ishlaydi. Sizning bosishlaringiz ushlab qolinadi, shuning uchun ikki kursor aralashmaydi. `Esc` sichqonchani darhol sizga qaytaradi.
 
-**Fonda, o'z tablarida ishlaydi:** agent sizni o'z tabiga tortmaydi. Siz boshqa tab yoki oynaga o'tsangiz ham u ishini davom ettiradi. O'zi ochgan tablar oddiy fon tablari bo'lib ochiladi — hech qanday belgi yoki guruh yo'q, sizniki bilan bir xil — shuning uchun uning kursori bilan sizniki bir sahifada aralashmaydi.
+**Faqat ochiq sahifada ishlaydi:** agent barcha ishni siz ko'rib turgan faol tabda bajaradi — ko'rsatkich qanday sirg'alib borishini, maydonlar to'lishini, tugmalar bosilishini ko'rasiz. Yangi sahifa kerak bo'lsa, `open_tab` uni oldingizga ochadi; faqat boshqa tabni ko'rsatsangizgina `bind_tab` ishlatiladi. Orqa planda, siz ko'rmaydigan tabda hech narsa qilinmaydi.
 
 **Harakatdan oldin ko'radi:** har bir ish boshida ochiq tablarni va siz ko'rsatgan tabni o'qiydi; skript ichida ham har bir bosish, to'ldirish yoki buyurtmadan oldin sahifaning hozirgi holatini ko'rib, keyin harakat qiladi — oynachi, o'zgargan narx yoki yangi xato e'tibordan qochmaydi. Agent eslab qolgan sxema emas, ekranda turgan narsaga asoslanadi.
 

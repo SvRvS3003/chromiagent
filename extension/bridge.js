@@ -118,25 +118,23 @@ const answerText = (r) => {
   return (ANSWERS[r?.type] || ANSWERS.cancel)(r?.value);
 };
 
-// ---- the tab this agent works in ----
-// The agent's own tab, not the user's: it stays put while the user moves between their tabs, so both
-// work at the same time. open_tab() and bind_tab() set it; it is kept for the browser session.
+// The agent works on the page the user is looking at: the active tab of this panel's window.
+// bind_tab is only an explicit override when the user points at a different tab; it is not persisted,
+// so a new panel session always starts on the page in front of the user.
 let boundTab = null;
-const boundKey = async () => `bound:${(await panelReady).windowId}`;
-(async () => {
-  try { boundTab = (await chrome.storage.session.get(await boundKey()))[await boundKey()] ?? null; } catch { boundTab = null; }
-  if (boundTab != null) await chrome.tabs.get(boundTab).catch(() => { boundTab = null; });
-})();
-async function setBound(tabId) {
-  boundTab = tabId;
-  try { await chrome.storage.session.set({ [await boundKey()]: tabId }); } catch {}
+async function activeTab() {
+  const { windowId } = await panelReady;
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (tab && /^https?:/i.test(tab.url || '')) return tab.id;
+  const [front] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (front && /^https?:/i.test(front.url || '')) return front.id;
+  throw new Error('no web page is open in front of you: switch to the page you want me to work on');
 }
-// An explicit tabId wins, then the bound tab. Without either the agent is told to open or pick a tab:
-// guessing "the active one" is what used to pull the agent onto the tab the user is working in.
+async function setBound(tabId) { boundTab = tabId; } // explicit, in-memory only
+// Explicit tabId wins; otherwise the user's open page. Never silently work in a hidden tab.
 async function tabArg(args = {}) {
-  const id = args.tabId ?? boundTab;
-  if (id == null) throw new Error('no tab picked yet: call open_tab({ url }) for new work, or bind_tab({ tabId }) for a tab the user pointed at (tabId from list_tabs)');
-  try { await chrome.tabs.get(id); } catch { if (id === boundTab) await setBound(null); throw new Error(`tab ${id} is gone; call list_tabs`); }
+  const id = args.tabId ?? boundTab ?? await activeTab();
+  try { await chrome.tabs.get(id); } catch { if (id === boundTab) boundTab = null; throw new Error(`tab ${id} is gone; call list_tabs`); }
   return id;
 }
 
@@ -149,19 +147,19 @@ const tools = {
   async bind_tab({ tabId }) {
     const t = await chrome.tabs.get(tabId);
     await setBound(tabId);
-    return `working in "${t.title}" (${t.url}). It stays your tab while the user moves between theirs; leave tabId out and the tools act here.`;
+    return `working in "${t.title}" (${t.url}) — the page the user pointed at. Without an explicit tabId the tools act here; say "shu ochiq sahifa" to go back to the page in front.`;
   },
   async activate_tab({ tabId }) {
     const t = await chrome.tabs.update(tabId, { active: true });
     await chrome.windows.update(t.windowId, { focused: true });
     return `active: ${t.title}`;
   },
-  async open_tab({ url, active = false }) {
+  async open_tab({ url, active = true }) {
     noFile(url);
-    const t = await chrome.tabs.create({ url, active }); // a normal background tab, no markings
+    // Opens in front: the agent works on the page the user can see, never in a hidden tab.
+    const t = await chrome.tabs.create({ url, active: true });
     await markMine(t.id);
-    await setBound(t.id);
-    return { tabId: t.id, windowId: t.windowId, bound: true };
+    return { tabId: t.id, windowId: t.windowId, active: true };
   },
   async close_tab({ tabId }) {
     await chrome.tabs.remove(tabId);
