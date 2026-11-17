@@ -138,12 +138,15 @@
       pos = { x, y };
       return Promise.resolve(pos);
     }
-    const dur = Math.round(Math.min(720, Math.max(170, dist * 0.55)) * (0.85 + Math.random() * 0.35));
-    const overshoot = dist > 110 && Math.random() < 0.35;
+    const dur = Math.round(Math.min(760, Math.max(190, dist * 0.58)) * (0.8 + Math.random() * 0.4));
+    const overshoot = dist > 110 && Math.random() < 0.4;
     const nx = -dy / dist, ny = dx / dist;
-    const bend = (0.10 + Math.random() * 0.26) * dist * (Math.random() < 0.5 ? 1 : -1);
+    // A real hand never draws a straight line: a wide arc to the side, plus a low wobble along it.
+    const bend = (0.20 + Math.random() * 0.36) * dist * (Math.random() < 0.5 ? 1 : -1);
+    const wobble = (0.05 + Math.random() * 0.08) * dist * (Math.random() < 0.5 ? 1 : -1);
+    const weaveFreq = 1.4 + Math.random() * 1.6;
     const cx = (start.x + x) / 2 + nx * bend, cy = (start.y + y) / 2 + ny * bend;
-    const over = overshoot ? 5 + Math.random() * 7 : 0;
+    const over = overshoot ? 6 + Math.random() * 8 : 0;
     const ax = x + (dx / dist) * over, ay = y + (dy / dist) * over; // the approach passes the target a little
     const t0 = performance.now();
     return new Promise((resolve) => {
@@ -151,9 +154,10 @@
         const t = Math.min(1, (performance.now() - t0) / dur);
         const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // cubic ease in-out
         const m = 1 - e;
-        const jitter = Math.sin(Math.PI * e) * 1.7; // noise that fades at both ends
-        const px = m * m * start.x + 2 * m * e * cx + e * e * ax + (Math.random() - 0.5) * jitter * nx * 2;
-        const py = m * m * start.y + 2 * m * e * cy + e * e * ay + (Math.random() - 0.5) * jitter * ny * 2;
+        const jitter = Math.sin(Math.PI * e) * 2.6; // noise that fades at both ends
+        const weave = Math.sin(e * Math.PI * 2 * weaveFreq) * wobble * Math.sin(Math.PI * e);
+        const px = m * m * start.x + 2 * m * e * cx + e * e * ax + (Math.random() - 0.5) * jitter * nx * 2 + nx * weave;
+        const py = m * m * start.y + 2 * m * e * cy + e * e * ay + (Math.random() - 0.5) * jitter * ny * 2 + ny * weave;
         place(px, py);
         if (t < 1) { requestAnimationFrame(step); return; }
         if (!overshoot) { pos = { x, y }; resolve(pos); return; }

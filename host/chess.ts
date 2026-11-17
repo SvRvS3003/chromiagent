@@ -98,12 +98,12 @@ const easeCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t 
 function arcPoints(a: Pt, b: Pt): Pt[] {
   const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
   const nx = -dy / d, ny = dx / d;
-  const bend = (0.10 + Math.random() * 0.24) * d * (Math.random() < 0.5 ? 1 : -1);
+  const bend = (0.18 + Math.random() * 0.32) * d * (Math.random() < 0.5 ? 1 : -1);
   const cx = (a.x + b.x) / 2 + nx * bend, cy = (a.y + b.y) / 2 + ny * bend;
   const N = Math.max(12, Math.min(26, Math.round(d / 13)));
   const pts: Pt[] = [];
   for (let i = 1; i <= N; i++) {
-    const t = i / N, e = easeCubic(t), m = 1 - e, j = Math.sin(Math.PI * e) * 1.5;
+    const t = i / N, e = easeCubic(t), m = 1 - e, j = Math.sin(Math.PI * e) * 2.1;
     pts.push({ x: m * m * a.x + 2 * m * e * cx + e * e * b.x + (Math.random() - 0.5) * j * nx * 2,
                y: m * m * a.y + 2 * m * e * cy + e * e * b.y + (Math.random() - 0.5) * j * ny * 2 });
   }

@@ -128,8 +128,8 @@ const answerText = (r) => {
   return (ANSWERS[r?.type] || ANSWERS.cancel)(r?.value);
 };
 
-// An explicitly selected tab stays selected across panel/extension reloads. Every action focuses the
-// selected tab so the page, highlight and animated pointer remain visible together.
+// An explicitly selected tab stays selected across panel/extension reloads. The agent operates on
+// that tab without changing the user's current window or stealing focus.
 let boundTab = null;
 let lastWebTab = null;
 const isWebTab = (t) => !!t && /^https?:/i.test(t.url || '');
@@ -186,18 +186,18 @@ async function focusTab(tabId) {
   await chrome.windows.update(tab.windowId, { focused: true });
   return tab;
 }
-// Explicit tabId wins; otherwise follow the persistent binding or the active page. Never act in a
-// hidden tab: focus it first so page actions and cursor animation are visible to the user.
+// Explicit tabId wins; otherwise pin the active page on the first action, then keep working there
+// while the user switches windows or tabs.
 async function tabArg(args = {}) {
   const explicit = args.tabId != null;
   let id = explicit ? args.tabId : await getBound();
-  if (id == null) id = await activeTab();
-  try { await focusTab(id); }
+  if (id == null) { id = await activeTab(); await setBound(id); }
+  try { await chrome.tabs.get(id); }
   catch {
     if (explicit) throw new Error(`tab ${id} is gone; call list_tabs`);
     await setBound(null);
     id = await activeTab();
-    await focusTab(id);
+    await setBound(id);
   }
   if (explicit) await setBound(id);
   return id;
@@ -211,9 +211,9 @@ const tools = {
     return tabs.map((t) => ({ tabId: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url, mine: mine.has(t.id) || undefined, bound: t.id === bound || undefined, audible: t.audible || undefined, pinned: t.pinned || undefined }));
   },
   async bind_tab({ tabId }) {
-    const t = await focusTab(tabId);
+    const t = await chrome.tabs.get(tabId);
     await setBound(tabId);
-    return `selected and focused "${t.title}" (${t.url}); I'll keep using this tab until you bind another tab or call unbind_tab`;
+    return `selected "${t.title}" (${t.url}); I'll keep working in this tab without switching your window until you bind another tab or call unbind_tab`;
   },
   async unbind_tab() {
     await setBound(null);
@@ -224,13 +224,13 @@ const tools = {
     await setBound(tabId);
     return `active: ${t.title}`;
   },
-  async open_tab({ url, active = true }) {
+  async open_tab({ url, active = false }) {
     noFile(url);
-    // Opens in front: the agent works on the page the user can see, never in a hidden tab.
-    const t = await chrome.tabs.create({ url, active: true });
+    // Work tabs open in the background by default so the agent does not take over the user's screen.
+    const t = await chrome.tabs.create({ url, active: !!active });
     await markMine(t.id);
     await setBound(t.id);
-    return { tabId: t.id, windowId: t.windowId, active: true };
+    return { tabId: t.id, windowId: t.windowId, active: !!active };
   },
   async close_tab({ tabId }) {
     await chrome.tabs.remove(tabId);
