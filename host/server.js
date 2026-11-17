@@ -13,7 +13,7 @@ const { WebSocketServer } = require('ws');
 
 const PORT = 17371;
 const EXT_ORIGIN = 'chrome-extension://lagobfbebmgoaemfkbnmeljdfagpaefj';
-const LOCAL_PATHS = new Set(['/mcp', '/cdp']);
+const LOCAL_PATHS = new Set(['/mcp', '/cdp', '/control']);
 const route = (req) => new URL(req.url, 'http://localhost');
 const WIN = process.platform === 'win32';
 
@@ -164,6 +164,8 @@ const wss = new WebSocketServer({
 
 const bridges = new Map();    // panel id -> bridge socket
 let latestBridge = null;      // for tools started outside a panel terminal
+const controls = new Set();   // extension service-worker sockets, alive even when the panel is closed
+const pendingReopen = new Set(); // panel ids whose agent asked for the panel to be reopened
 const pending = new Map();    // relay id -> { ws, id }
 let seq = 0;
 
@@ -172,18 +174,45 @@ const isOpen = (ws) => ws && ws.readyState === ws.OPEN;
 const bridgeFor = (panel) => (panel ? bridges.get(panel) : latestBridge);
 const notOpen = (panel) => (panel ? 'The Chromiagent panel this agent was started from is closed. Reopen the panel.' : 'Chromiagent side panel is not open in Chrome.');
 
+// A closed panel must not blind the agent: ask the extension's service worker to reopen it, then
+// alias whatever new panel connects back to the id this agent was started from.
+async function ensureBridge(panel) {
+  let bridge = bridgeFor(panel);
+  if (isOpen(bridge)) return bridge;
+  if (controls.size) {
+    pendingReopen.add(panel || '');
+    for (const c of controls) if (isOpen(c)) c.send(JSON.stringify({ action: 'open_panel' }));
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      bridge = bridgeFor(panel);
+      if (isOpen(bridge)) return bridge;
+    }
+  }
+  return null;
+}
+
+function onControl(ws) {
+  controls.add(ws);
+  ws.on('close', () => controls.delete(ws));
+  ws.on('error', () => controls.delete(ws));
+  ws.on('message', () => {}); // the channel is host -> extension only
+}
+
 wss.on('connection', (ws, req) => {
   const { pathname, searchParams } = route(req);
   const panel = searchParams.get('panel') || '';
   if (pathname === '/bridge') return onBridge(ws, panel);
   if (pathname === '/mcp') return onMcp(ws, panel);
   if (pathname === '/cdp') return onCdp(ws, panel);
+  if (pathname === '/control') return onControl(ws);
   if (pathname === '/agents') return ws.close(1000, JSON.stringify(installedAgents));
   onTerminal(ws);
 });
 
 function onBridge(ws, panel) {
   if (panel) bridges.set(panel, ws);
+  // A freshly reopened panel gets a fresh id; the agent still uses its original one.
+  for (const old of pendingReopen) { bridges.set(old, ws); pendingReopen.delete(old); }
   latestBridge = ws;
   ws.cdpClient = null;
   ws.on('message', (raw) => {
@@ -202,9 +231,13 @@ function onBridge(ws, panel) {
 }
 
 function onMcp(ws, panel) {
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
-    const bridge = bridgeFor(panel);
+    if (msg.tool === 'open_panel') {
+      const bridge = await ensureBridge(panel);
+      return ws.send(JSON.stringify({ id: msg.id, result: isOpen(bridge) ? 'the panel is open and connected' : notOpen(panel) }));
+    }
+    const bridge = await ensureBridge(panel);
     if (!isOpen(bridge)) return ws.send(JSON.stringify({ id: msg.id, error: notOpen(panel) }));
     const rid = ++seq;
     pending.set(rid, { ws, id: msg.id });
@@ -212,8 +245,8 @@ function onMcp(ws, panel) {
   });
 }
 
-function onCdp(ws, panel) {
-  const bridge = bridgeFor(panel);
+async function onCdp(ws, panel) {
+  const bridge = await ensureBridge(panel);
   if (!isOpen(bridge)) return ws.close(1011, notOpen(panel));
   if (bridge.cdpClient) bridge.cdpClient.close();
   bridge.cdpClient = ws;

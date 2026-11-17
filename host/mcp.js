@@ -10,6 +10,7 @@ const TARGET = {
 };
 const TOOLS = [
   ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). mine: a tab you opened; bound: the tab you are working in. The user\'s own tabs are the ones without mine.', {}, []],
+  ['open_panel', 'Reopen the Chromiagent panel if it is closed: this reconnects the browser bridge and restores every chrome.* tool. Normally automatic — call it only if a tool says the panel is closed.', {}, []],
   ['open_tab', 'Open a new tab in the background (the user stays where they are) and make it your working tab. active: true only if the user asked to see it.', { url: { type: 'string' }, active: { type: 'boolean' } }, ['url']],
   ['bind_tab', 'Work in this tab from now on: the user switching between their tabs does not move your target. Omit tabId afterwards and the tools act here. Use it when the user points at a tab ("this page", "shu tab"), and to switch between several jobs.', TAB, ['tabId']],
   ['activate_tab', 'Switch to a tab and focus its window. Only when the user asked to see it.', TAB, []],
