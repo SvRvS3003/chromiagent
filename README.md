@@ -4,7 +4,7 @@
 
 # Chromiagent
 
-**A terminal in your browser's side panel, running an AI agent that can see and drive every open tab.**
+**A terminal in your browser's side panel, running an agent that can see and drive every open tab.**
 
 Made by **SvRvS** · MIT License
 
@@ -245,7 +245,7 @@ curl -fsSL https://raw.githubusercontent.com/SvRvS3003/chromiagent/main/install.
 
 ## O'zbekcha
 
-Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamda barcha Chromium brauzerlarida ishlaydi (Chrome, Edge, Brave, Vivaldi, Opera, Arc). Undagi AI agent barcha ochiq tablarni ko'radi va boshqaradi. Murakkab vazifalarda u o'zi TypeScript code mode'ga o'tadi va Playwright'ni (`browser_evaluate`, `browser_run_code_unsafe`) sizning ochiq brauzeringizda ishlatadi.
+Chromiagent — brauzer yon panelidagi terminal. Windows, macOS va Linux'da hamda barcha Chromium brauzerlarida ishlaydi (Chrome, Edge, Brave, Vivaldi, Opera, Arc). Undagi agent barcha ochiq tablarni ko'radi va boshqaradi. Murakkab vazifalarda u o'zi TypeScript code mode'ga o'tadi va Playwright'ni (`browser_evaluate`, `browser_run_code_unsafe`) sizning ochiq brauzeringizda ishlatadi.
 
 **Element belgilash:** paneldagi belgilash tugmasini bosing, sahifadagi elementni tanlang, izoh yozing va `Ctrl+Enter` bosing. Izoh element ma'lumotlari bilan birga agentga yuboriladi.
 

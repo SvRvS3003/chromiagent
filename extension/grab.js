@@ -4,7 +4,7 @@
 // The overlay technique (closed shadow root, top-layer popover, capturing page presses) is adapted from
 // Orca's browser grab mode: MIT License, Copyright (c) 2026 Lovecast Inc.
 (() => {
-  if (window.__chromiagentGrab) { window.__chromiagentGrab.cleanup(); return; } // second press toggles off
+  if (window.__chromiagentGrab) window.__chromiagentGrab.cleanup(); // every press starts a fresh overlay
 
   const NEON = '#39ff14';
   const host = document.createElement('div');
@@ -43,7 +43,8 @@
     .card .send { background:${NEON}; color:#061a02; }
     .card .cancel { background:#222622; color:#cfe8c8; }
     .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); padding:8px 16px; border-radius:999px;
-      background:${NEON}; color:#061a02; font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }`;
+      background:${NEON}; color:#061a02; font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
+    .toast.fail { background:#ff5f56; color:#2b0404; box-shadow:0 6px 24px rgba(0,0,0,.45); }`;
   shadow.appendChild(style);
 
   const box = document.createElement('div'); box.className = 'box'; overlay.appendChild(box);
@@ -90,7 +91,10 @@
   const PRESS = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'dblclick', 'auxclick', 'click', 'contextmenu'];
   function onPress(e) {
     if (!e.isTrusted || (e.type === 'click' && e.detail === 0)) return;
-    e.preventDefault();
+    // The page never reacts to the pick (no clicks, no navigation), but pointerdown/mousedown keep
+    // their default focus: cancel it and the side panel holds the keyboard, so nothing typed into
+    // the feedback card ever reaches it.
+    if (e.type !== 'pointerdown' && e.type !== 'mousedown') e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type === 'click' && current && !picked) pick(current);
   }
@@ -180,16 +184,51 @@
       card.style.top = top + 'px';
     }
     place();
+    // The keyboard must land in this box: take the window first (the side panel may still hold it),
+    // then the textarea, and keep trying for two seconds — a hint appears if it never takes.
+    const focusBox = () => { try { window.focus(); } catch {} area.focus(); };
+    focusBox();
+    let grabs = 0;
+    const focusTimer = setInterval(() => {
+      if (document.hasFocus() && document.activeElement === host) { clearInterval(focusTimer); return; }
+      if (++grabs >= 10) {
+        clearInterval(focusTimer);
+        card.querySelector('.keys').textContent = 'click the box to type · Ctrl+Enter send · Esc cancel';
+        return;
+      }
+      focusBox();
+    }, 200);
+    cleanups.push(() => clearInterval(focusTimer));
+    const toastMsg = (text, fail) => {
+      const t = document.createElement('div');
+      t.className = 'toast' + (fail ? ' fail' : '');
+      t.textContent = text;
+      overlay.appendChild(t);
+      setTimeout(cleanup, fail ? 2800 : 900);
+    };
     const send = () => {
       const feedback = area.value.trim();
-      if (!feedback) { area.focus(); return; }
-      chrome.runtime.sendMessage({ type: 'chromiagent-grab', feedback, element: describe(el) });
-      card.remove();
-      const toast = document.createElement('div');
-      toast.className = 'toast';
-      toast.textContent = 'Sent to the agent';
-      overlay.appendChild(toast);
-      setTimeout(cleanup, 900);
+      if (!feedback) {
+        area.focus();
+        card.querySelector('.keys').textContent = 'write your feedback first · Esc cancel';
+        return;
+      }
+      // The panel answers with success or the exact reason it could not be delivered — never silent.
+      let settled = false;
+      const deliver = (reply) => {
+        if (settled) return;
+        settled = true;
+        const err = chrome.runtime.lastError;
+        const why = err ? err.message : reply && reply.ok === false ? reply.why : null;
+        card.remove();
+        toastMsg(why ? `Not sent — ${why}` : 'Sent to the agent', !!why);
+      };
+      try {
+        chrome.runtime.sendMessage({ type: 'chromiagent-grab', feedback, element: describe(el) }, deliver);
+      } catch (e) {
+        deliver({ ok: false, why: String((e && e.message) || e) });
+      }
+      setTimeout(() => { if (!settled) deliver({ ok: false, why: 'the panel did not answer' }); }, 3000);
     };
     // Keys typed in the card stay in the card: page shortcuts (video players, editors) never see them.
     card.addEventListener('keydown', (e) => {

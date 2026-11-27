@@ -393,7 +393,16 @@
     layer.appendChild(el);
     position(el, pos);
     typeOut(el.querySelector('.q'), String(question || ''));
-    setTimeout(() => (fieldMode ? field.focus() : input.focus()), 60);
+    // Take the window first: while the side panel holds the keyboard, a plain focus() lands nowhere
+    // and the answer the user types never appears in this card.
+    const takeKeys = () => { try { window.focus(); } catch {} (fieldMode ? field : input).focus(); };
+    takeKeys();
+    let keyGrabs = 0;
+    const keyTimer = setInterval(() => {
+      if (document.hasFocus() && document.activeElement === host) { clearInterval(keyTimer); return; }
+      if (++keyGrabs >= 8) { clearInterval(keyTimer); return; }
+      takeKeys();
+    }, 250);
 
     let resolve;
     const done = new Promise((r) => { resolve = r; });
@@ -402,6 +411,7 @@
       if (card !== handle) return;
       card = null;
       clearTimeout(timer);
+      clearInterval(keyTimer);
       cancelAnimationFrame(raf);
       if (onKey) removeEventListener('keydown', onKey, true);
       mark?.remove();

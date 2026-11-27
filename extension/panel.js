@@ -13,7 +13,7 @@ async function startSession(fresh = false) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  // Unicode 11 widths keep emoji and box drawing aligned in full-screen TUIs (opencode, codex...).
+  // Unicode 11 widths keep emoji and box drawing aligned in full-screen TUIs.
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.open($('term'));
@@ -76,17 +76,29 @@ function grabMessage({ feedback, element: el }, tabId) {
   ].filter((l) => l !== null).join('\n');
 }
 
-chrome.runtime.onMessage.addListener(async (msg, sender) => {
-  if (msg?.type !== 'chromiagent-grab' || !session) return;
-  const { windowId } = await panelReady;
-  if (sender.tab?.windowId !== windowId) return; // another window's panel owns it
-  // Bracketed paste keeps the multi-line message as one input; Enter then submits it to the agent.
-  session.send({ type: 'in', data: `\x1b[200~${grabMessage(msg, sender.tab.id)}\x1b[201~` });
-  setTimeout(() => session?.send({ type: 'in', data: '\r' }), 150);
-  session.term.focus();
+let panelInfo = null;
+panelReady.then((r) => { panelInfo = r; }).catch(() => {});
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'chromiagent-grab') return;
+  if (panelInfo && sender.tab && sender.tab.windowId !== panelInfo.windowId) return; // the other window's panel owns it
+  const answer = (reply) => { try { sendResponse(reply); } catch {} };
+  if (!session || session.ws.readyState !== WebSocket.OPEN) {
+    answer({ ok: false, why: 'this panel has no running session — press + for a new terminal' });
+    return true;
+  }
+  try {
+    // Bracketed paste keeps the multi-line message as one input; Enter then submits it to the agent.
+    session.send({ type: 'in', data: `\x1b[200~${grabMessage(msg, sender.tab?.id ?? 0)}\x1b[201~` });
+    setTimeout(() => { try { session?.send({ type: 'in', data: '\r' }); } catch {} }, 250);
+    session.term.focus();
+    answer({ ok: true });
+  } catch (e) {
+    answer({ ok: false, why: String((e && e.message) || e) });
+  }
+  return true;
 });
 
-// ---- agent picker: any installed CLI (Claude Code, opencode, Codex, Qwen, Gemini) or a plain shell ----
+// ---- agent picker: any installed CLI or a plain shell ----
 const AGENT_NAMES = { claude: 'Claude Code', opencode: 'opencode', opencode2: 'opencode 2', codex: 'Codex', qwen: 'Qwen Code', gemini: 'Gemini CLI',
   pi: 'pi', 'kiro-cli': 'Kiro', freebuff: 'Freebuff', codebuff: 'Codebuff', cline: 'Cline', kimi: 'Kimi Code', grok: 'Grok', copilot: 'Copilot CLI',
   'cursor-agent': 'Cursor', crush: 'Crush', droid: 'Droid', amp: 'Amp', auggie: 'Auggie', goose: 'Goose', kilocode: 'Kilo Code', shell: 'Shell', custom: 'Other CLI…' };

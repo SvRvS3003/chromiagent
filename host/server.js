@@ -13,6 +13,16 @@ const { WebSocketServer } = require('ws');
 
 const PORT = 17371;
 const EXT_ORIGIN = 'chrome-extension://lagobfbebmgoaemfkbnmeljdfagpaefj';
+// A Chrome Web Store build gets a different extension id from this unpacked one. Both must reach
+// the local bridge: list the store id (one per line) in ~/.chromiagent/extra-origins after publishing.
+const EXT_ORIGINS = new Set([EXT_ORIGIN]);
+try {
+  const extra = fs.readFileSync(path.join(os.homedir(), '.chromiagent', 'extra-origins'), 'utf8');
+  for (const line of extra.split(/\r?\n/)) {
+    const id = line.trim();
+    if (/^[a-p]{32}$/.test(id)) EXT_ORIGINS.add(`chrome-extension://${id}`);
+  }
+} catch {}
 const LOCAL_PATHS = new Set(['/mcp', '/cdp', '/control']);
 const route = (req) => new URL(req.url, 'http://localhost');
 const WIN = process.platform === 'win32';
@@ -159,7 +169,7 @@ const wss = new WebSocketServer({
   port: PORT,
   maxPayload: 64 * 1024 * 1024,
   // Browsers always send Origin, so web pages can only reach the extension paths and are rejected there.
-  verifyClient: ({ origin, req }) => (LOCAL_PATHS.has(route(req).pathname) ? !origin : origin === EXT_ORIGIN),
+  verifyClient: ({ origin, req }) => (LOCAL_PATHS.has(route(req).pathname) ? !origin : EXT_ORIGINS.has(origin)),
 });
 
 const bridges = new Map();    // panel id -> bridge socket
