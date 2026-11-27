@@ -18,6 +18,16 @@ The open window is the source of truth; your memory of it is not. Before each ac
 - A game: read the live board / position before every move. A trading terminal: read the price, P/L and open positions before every order. A form: read the current field values before every fill. On a new message from the user, re-read the target tab before applying their new instruction — even if you were already working there.
 - If what you read contradicts the instruction, do not force the instruction through: act on the actual state (dismiss the dialog, sign in, wait for the page, cancel the wrong order), then resume the task. Report the contradiction only if you truly cannot proceed.
 
+### What a full page read gives you
+`read_page` is the main way to see the page; inside a script use `view(tabId)` (from the library) to get the same thing parsed, and `refFor(view, text)` to find a numbered element by its label.
+- `elements`: numbered interactive elements. Refs work inside **open shadow roots** and **same-origin iframes** too — their lines show `shadow#id >` or `frame#id >`. To target one by CSS, pierce with `selector: 'host >>> shadow:button'` or `'frame#id >>> button'`.
+- `overlays`: every open dialog, popover, menu and listbox with its text and position. A popup you just opened is here — check it before assuming the click failed.
+- `selects`: every native `<select>` with all options (`value:label`, `*` marks the selected one). Set one with `chrome.type({ selector: '#native', text: 'Gamma' })` using its value or label — you never need to catch the browser's own dropdown.
+- `text`: visible text including dialogs, popovers, menus, shadow content and frames (plain `innerText` loses these).
+- `frames`, `shadows`: which frames and open shadow roots exist, for when an element you expect is not in the main DOM.
+- Browser-drawn UI that is not in the page DOM at all (native date picker, permission bubble, Chrome menu) will not appear in `read_page`. In that case use the read-only `playwright.browser_snapshot({})` accessibility tree, or `chrome.screenshot` / `chrome.watch` to see it, and only then act.
+- If a ref is stale after a re-render, read again — never guess the next number. Prefer a specific CSS selector for repeated similar elements.
+
 ## 1. Quick mode: the `chrome` MCP tools
 Fast, and no "debugging" bar. Use it for one simple step:
 - `list_tabs` for an overview of every tab in every window (`active: true` is the page in front). "This tab" / "this page" / "shu sahifa" means that active tab — just work there, no `bind_tab` needed.
@@ -59,7 +69,14 @@ const r = await observe(tabId, async (events) => {
 }, { seconds: 600 });
 return { r, seen };
 ```
-Pass `timeoutSec` a little above `seconds`.
+Pass `timeoutSec` a little above `seconds`. Inside the handler call `view(tabId)` for a fresh full read — it sees dialogs, popovers, select options, shadow content and frames that events alone do not describe:
+```ts
+const r = await observe(tabId, async () => {
+  const v = await view(tabId);            // fresh look, same full read as read_page
+  const add = refFor(v, 'Add to cart');   // numbered element from that look
+  if (add !== null && !v.text.includes('Sold out')) { await chrome.click({ tabId, ref: add }); return true; }
+}, { seconds: 120 });
+```
 
 Real-time trading, watching a price and firing at the right moment, reacting to a position's P/L — this is the same pattern with a rule inside the handler, and it is ONE script for the whole session, not one call per tick:
 ```ts

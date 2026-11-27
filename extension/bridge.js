@@ -17,34 +17,110 @@ const panelReady = (async () => {
 const noFile = (url) => { if (/^\s*file:/i.test(url || '')) throw new Error('file:// URLs are blocked (Chrome web tasks only)'); };
 
 
-// ---- in-page helpers (serialized into the tab by chrome.scripting) ----
-function pageSnapshot(maxChars) {
-  const sel = 'a[href],button,input,textarea,select,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=option],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
-  document.querySelectorAll('[data-ca]').forEach((e) => e.removeAttribute('data-ca'));
-  const lines = [];
-  let n = 0;
-  for (const e of document.querySelectorAll(sel)) {
-    const r = e.getBoundingClientRect();
-    const st = getComputedStyle(e);
-    if (r.width < 1 || r.height < 1 || st.visibility === 'hidden' || st.display === 'none') continue;
-    if (n >= 400) break;
-    e.setAttribute('data-ca', n);
-    const label = (e.getAttribute('aria-label') || e.innerText || (e.type === 'password' ? '' : e.value) || e.placeholder || e.title || e.alt || e.name || '').trim().replace(/\s+/g, ' ').slice(0, 80);
-    const kind = e.tagName.toLowerCase() + (e.type ? `:${e.type}` : '') + (e.getAttribute('role') ? `[${e.getAttribute('role')}]` : '');
-    const inView = r.bottom > 0 && r.top < innerHeight ? '' : ' (offscreen)';
-    lines.push(`[${n}] ${kind} "${label}"${e.href ? ' -> ' + e.href : ''}${inView}`);
-    n++;
-  }
-  const text = (document.body?.innerText || '').slice(0, maxChars || 15000);
-  return { title: document.title, url: location.href, scrollY: Math.round(scrollY), pageHeight: document.documentElement.scrollHeight, text, elements: lines.join('\n') };
-}
+// ---- in-page helpers (one self-contained function serialized into the tab by chrome.scripting) ----
+// One function serves every read/action call so the traversal helpers stay together. It sees open
+// shadow roots, same-origin frames, dialogs, popovers and native select options — the places where a
+// plain document.querySelectorAll("button,input,...") lost popups and dropdowns.
+function pageCmd(cmd, ref, selector, text, submit, dy) {
+  const CA_SEL = 'a[href],button,input,textarea,select,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=option],[contenteditable=""],[contenteditable=true],[onclick],[tabindex]:not([tabindex="-1"])';
+  const SKIP_TEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|PATH)$/;
+  const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const shown = (el) => {
+    try {
+      const r = el.getBoundingClientRect(), st = getComputedStyle(el);
+      return r.width >= 1 && r.height >= 1 && st.visibility !== 'hidden' && st.display !== 'none';
+    } catch { return false; }
+  };
+  const labelOf = (el) => clean(el.getAttribute('aria-label') || el.innerText || (el.type === 'password' ? '' : el.value) || el.placeholder || el.title || el.alt || el.name || '').slice(0, 80);
+  const kindOf = (el) => el.tagName.toLowerCase() + (el.type ? `:${el.type}` : '') + (el.getAttribute('role') ? `[${el.getAttribute('role')}]` : '');
+  const frameDoc = (el) => { try { const d = el.contentDocument; return d && d.body ? d.body : null; } catch { return null; } };
+  const walk = (root, fn, depth = 0, prefix = '') => {
+    if (depth > 4) return;
+    let nodes;
+    try { nodes = root.querySelectorAll('*'); } catch { return; }
+    for (const el of nodes) {
+      fn(el, prefix);
+      if (el.shadowRoot) walk(el.shadowRoot, fn, depth + 1, prefix + `shadow#${el.id || el.tagName.toLowerCase()} > `);
+      if (el.tagName === 'IFRAME') { const d = frameDoc(el); if (d) walk(d, fn, depth + 1, prefix + `frame#${el.id || ''} > `); }
+    }
+  };
+  const findRef = (root, wanted, depth = 0) => {
+    if (depth > 4) return null;
+    let nodes;
+    try { nodes = root.querySelectorAll('*'); } catch { return null; }
+    for (const el of nodes) {
+      if (el.getAttribute('data-ca') === String(wanted)) return el;
+      if (el.shadowRoot) { const r = findRef(el.shadowRoot, wanted, depth + 1); if (r) return r; }
+      if (el.tagName === 'IFRAME') { const d = frameDoc(el); if (d) { const r = findRef(d, wanted, depth + 1); if (r) return r; } }
+    }
+    return null;
+  };
+  // A selector may pierce with "host >>> inner"; prefix a part with shadow: or frame: to require it.
+  const resolve = () => {
+    if (!selector) return findRef(document.body || document.documentElement, ref);
+    if (!selector.includes('>>>')) return document.querySelector(selector);
+    let root = document, el = null;
+    const parts = selector.split('>>>').map((s) => s.trim()).filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+      const forced = /^(shadow|frame):/.test(parts[i]);
+      const query = forced ? parts[i].slice(parts[i].indexOf(':') + 1).trim() : parts[i];
+      el = root.querySelector(query);
+      if (!el) return null;
+      if (i === parts.length - 1) return el;
+      // Pierce when this part demanded it, or when the next part names a shadow/frame child.
+      const nextForced = /^(shadow|frame):/.test(parts[i + 1]);
+      root = (forced || nextForced) ? (el.shadowRoot || frameDoc(el) || el) : el;
+    }
+    return el;
+  };
 
-function pageAct(action, ref, selector, text, submit, dy) {
-  if (action === 'scroll') { scrollBy(0, dy); return `scrolled to y=${Math.round(scrollY)}`; }
-  const el = selector ? document.querySelector(selector) : document.querySelector(`[data-ca="${ref}"]`);
+  if (cmd === 'snapshot') {
+    document.querySelectorAll('[data-ca]').forEach((e) => e.removeAttribute('data-ca'));
+    const lines = [], selects = [], overlays = [], frames = [], shadows = [];
+    let n = 0;
+    walk(document.body || document.documentElement, (el, prefix) => {
+      const r = el.getBoundingClientRect();
+      if (el.matches(CA_SEL) && shown(el) && n < 400) {
+        el.setAttribute('data-ca', n);
+        const inView = r.bottom > 0 && r.top < innerHeight ? '' : ' (offscreen)';
+        lines.push(`[${n}] ${prefix}${kindOf(el)} "${labelOf(el)}"${el.href ? ' -> ' + el.href : ''}${inView}`);
+        n++;
+      }
+      if (el.tagName === 'SELECT') {
+        const opts = [...el.options].map((o) => `${o.value}:${clean(o.text)}${o.selected ? '*' : ''}${o.disabled ? '!' : ''}`).join(' | ');
+        selects.push(`select "${labelOf(el)}" value=${el.value} options: ${opts}`);
+      }
+      const role = el.getAttribute('role') || '';
+      const isOverlay = (el.tagName === 'DIALOG' && el.open) || (el.matches(':popover-open')) || ['dialog', 'menu', 'listbox', 'alertdialog'].includes(role);
+      if (isOverlay && shown(el)) overlays.push(`${el.tagName.toLowerCase()}${role ? `[${role}]` : ''} "${clean(el.innerText || el.textContent).slice(0, 200)}" ${Math.round(r.width)}x${Math.round(r.height)} at (${Math.round(r.x)},${Math.round(r.y)})`);
+      if (el.shadowRoot) shadows.push(`${kindOf(el)}#${el.id || ''} has ${el.shadowRoot.querySelectorAll('*').length} shadow nodes`);
+      if (el.tagName === 'IFRAME') {
+        const d = frameDoc(el);
+        if (d) frames.push(`iframe#${el.id || ''} "${clean(el.title)}" ${location.href !== (el.contentWindow && el.contentWindow.location.href) ? el.contentWindow.location.href : ''}`);
+      }
+    });
+    // innerText drops top-layer (dialog/popover), shadow and frame text; collect visible text nodes.
+    const parts = [];
+    let scanned = 0;
+    walk(document.body || document.documentElement, (el) => {
+      if (++scanned > 3000 || SKIP_TEXT.test(el.tagName) || !shown(el)) return;
+      for (const node of el.childNodes) if (node.nodeType === 3 && clean(node.nodeValue)) parts.push(clean(node.nodeValue));
+    });
+    const text = (parts.join('\n') || (document.body && document.body.innerText) || '').slice(0, Number(dy) || 15000);
+    return { title: document.title, url: location.href, scrollY: Math.round(scrollY), pageHeight: document.documentElement.scrollHeight, text, elements: lines.join('\n'), overlays: overlays.join('\n'), selects: selects.join('\n'), frames: frames.join('\n'), shadows: shadows.join('\n') };
+  }
+
+  if (cmd === 'scroll') { scrollBy(0, dy); return `scrolled to y=${Math.round(scrollY)}`; }
+  const el = resolve();
+  if (cmd === 'locate') {
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2) };
+  }
   if (!el) return { error: `element not found (${selector || 'ref ' + ref}); call read_page again` };
   el.scrollIntoView({ block: 'center' });
-  if (action === 'click') {
+  if (cmd === 'click') {
     const r = el.getBoundingClientRect();
     const init = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
     el.dispatchEvent(new PointerEvent('pointerover', { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
@@ -56,15 +132,23 @@ function pageAct(action, ref, selector, text, submit, dy) {
     el.click();
     return 'clicked';
   }
-  // type
   if (el.type === 'password') return { error: 'password fields are typed by the user: call ask_user with this field' };
   el.focus();
+  if (el.tagName === 'SELECT') {
+    const opt = [...el.options].find((o) => o.value === text || clean(o.text).toLowerCase() === clean(text).toLowerCase());
+    if (!opt) return { error: `no option "${text}" in this select; read_page lists its options` };
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+    setter.call(el, opt.value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return `selected ${opt.value}`;
+  }
   if (el.isContentEditable) {
     document.execCommand('selectAll', false);
     document.execCommand('insertText', false, text);
   } else {
     // Native setter so React/Vue controlled inputs see the change.
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, text);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -80,15 +164,6 @@ async function inPage(tabId, func, args, world = 'ISOLATED') {
   noFile((await chrome.tabs.get(tabId)).url);
   const [r] = await chrome.scripting.executeScript({ target: { tabId }, func, args, world });
   return r.result;
-}
-
-// Scrolls the element into view and returns its center, for the agent's pointer.
-function pageLocate(ref, selector) {
-  const el = selector ? document.querySelector(selector) : document.querySelector(`[data-ca="${ref}"]`);
-  if (!el) return null;
-  el.scrollIntoView({ block: 'center', inline: 'center' });
-  const r = el.getBoundingClientRect();
-  return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2) };
 }
 
 // ---- the agent's own pointer and question card (agent-ui.js, injected into the page) ----
@@ -107,7 +182,7 @@ async function pointTo(tabId, x, y, label) {
 }
 const pressAt = (tabId) => ui(tabId, 'press').catch(() => {});
 async function pointAtElement(tabId, ref, selector, label) {
-  const p = await inPage(tabId, pageLocate, [ref ?? null, selector ?? null]);
+  const p = await inPage(tabId, pageCmd, ['locate', ref ?? null, selector ?? null]);
   if (p) await pointTo(tabId, p.x, p.y, label);
   return p;
 }
@@ -248,21 +323,21 @@ const tools = {
     const t = await chrome.tabs.get(tabId);
     return { title: t.title, url: t.url };
   },
-  read_page: ({ tabId, maxChars }) => inPage(tabId, pageSnapshot, [maxChars || 15000]),
+  read_page: ({ tabId, maxChars }) => inPage(tabId, pageCmd, ['snapshot', null, null, null, false, maxChars || 15000]),
   async click({ tabId, ref, selector }) {
     const p = await pointAtElement(tabId, ref, selector, 'click');
     if (!p) return { error: `element not found (${selector || 'ref ' + ref}); call read_page again` };
     await pressAt(tabId);
-    return inPage(tabId, pageAct, ['click', ref ?? null, selector ?? null, null, false, 0]);
+    return inPage(tabId, pageCmd, ['click', ref ?? null, selector ?? null, null, false, 0]);
   },
   async type({ tabId, ref, selector, text, submit }) {
     await pointAtElement(tabId, ref, selector, 'typing');
-    return inPage(tabId, pageAct, ['type', ref ?? null, selector ?? null, text, !!submit, 0]);
+    return inPage(tabId, pageCmd, ['type', ref ?? null, selector ?? null, text, !!submit, 0]);
   },
   async scroll({ tabId, dy }) {
     const p = await inPage(tabId, () => ({ x: Math.round(innerWidth * 0.72), y: Math.round(innerHeight * 0.78) }));
     await pointTo(tabId, p.x, p.y, 'scrolling');
-    return inPage(tabId, pageAct, ['scroll', null, null, null, false, dy]);
+    return inPage(tabId, pageCmd, ['scroll', null, null, null, false, dy]);
   },
   // The pointer's human arc, for drags and chess moves: scan a friendly piece or two, glide in, dwell,
   // press, glide out, rest nearby. Runs through the extension so the pointer is what the user sees.

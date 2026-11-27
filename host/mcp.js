@@ -6,7 +6,7 @@ const TAB = { tabId: { type: 'number', description: 'Tab id from list_tabs. Leav
 const TARGET = {
   ...TAB,
   ref: { type: 'number', description: 'Element number from read_page' },
-  selector: { type: 'string', description: 'CSS selector (alternative to ref)' },
+  selector: { type: 'string', description: 'CSS selector (alternative to ref). Use `host >>> shadow:inner` or `frame#id >>> inner` to reach inside an open shadow root or a same-origin iframe; refs from read_page work there too.' },
 };
 const TOOLS = [
   ['list_tabs', 'List every open tab in every Chrome window (id, window, active, mine, bound, title, url, audible). The agent normally works in the active tab; `bound` is the explicit override from bind_tab.', {}, []],
@@ -18,9 +18,9 @@ const TOOLS = [
   ['activate_tab', 'Bring a tab to front and focus its window — then it becomes the page the agent works on.', TAB, []],
   ['close_tab', 'Close a tab.', TAB, ['tabId']],
   ['navigate', 'Load a URL in a tab, or go back/forward/reload.', { ...TAB, url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] } }, []],
-  ['read_page', 'Read a tab: title, url, visible text, and numbered interactive elements (use the numbers as ref).', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, []],
+  ['read_page', 'Read a tab in one call: title, url, visible text (including dialogs, popovers and menus), numbered interactive elements (use as ref), plus `overlays` (open dialogs/popovers/menus), `selects` (every native option with the selected one), `frames` and `shadows` (open shadow roots). Refs also reach elements inside open shadow roots and same-origin frames; their element lines show the path. Use this before every action.', { ...TAB, maxChars: { type: 'number', description: 'Text limit, default 15000' } }, []],
   ['click', 'Click an element in a tab (by ref from read_page or CSS selector).', TARGET, []],
-  ['type', 'Type text into an input/textarea/contenteditable; optional submit presses Enter / submits the form.', { ...TARGET, text: { type: 'string' }, submit: { type: 'boolean' } }, ['text']],
+  ['type', 'Type into an input/textarea/contenteditable, or set a native <select> by its value or option label (read_page lists its options) — no browser popup needed. Optional submit presses Enter / submits the form.', { ...TARGET, text: { type: 'string' }, submit: { type: 'boolean' } }, ['text']],
   ['press_key', 'Synthetic key presses sent into the focused element (Enter, Escape, Tab, ArrowDown…). The page reads them as real keydown/keyup — no debugger is attached and Chrome never shows the debug bar. Native-browser shortcuts (e.g. Cmd+T) are not affected; use those yourself.', { ...TAB, key: { type: 'string' } }, ['key']],
   ['scroll', 'Scroll a tab by pixels (positive = down).', { ...TAB, dy: { type: 'number' } }, ['dy']],
   ['run_js', 'Evaluate JavaScript in the page (main world, so page globals are visible; bypasses page CSP). Returns the JSON-encoded value; promises are awaited. No debugger is attached and Chrome never shows the debug bar.', { ...TAB, code: { type: 'string' } }, ['code']],

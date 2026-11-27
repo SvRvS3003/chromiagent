@@ -22,8 +22,7 @@ function extract(src, marker) {
 (async () => {
   const dir = path.join(__dirname, '..', 'extension');
   const bridge = fs.readFileSync(path.join(dir, 'bridge.js'), 'utf8');
-  const snapshotFn = extract(bridge, 'function pageSnapshot');
-  const actFn = extract(bridge, 'function pageAct');
+  const cmdFn = extract(bridge, 'function pageCmd');
   const pressFn = extract(bridge, 'inPage(tabId, (k) => {').replace('inPage(tabId, ', '');
 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -42,34 +41,34 @@ function extract(src, marker) {
     <a id="tail" href="#bottom">bottom</a>
   </body></html>`);
 
-  const snap = await page.evaluate(`(() => { ${snapshotFn} ${actFn}
-    const s = pageSnapshot(2000);
+  const snap = await page.evaluate(`(() => { ${cmdFn}
+    const s = pageCmd('snapshot', null, null, null, false, 2000);
     return { title: s.title, elements: s.elements, pageHeight: s.pageHeight };
   })()`);
   check('read_page snapshot: title and element list', snap.title === 'Action test' && /\[0\] button:submit "Go"/.test(snap.elements) && /input:text/.test(snap.elements), snap.elements.slice(0, 200));
 
-  const clickRes = await page.evaluate(`(() => { ${snapshotFn} ${actFn}
-    const s = pageSnapshot(2000);
+  const clickRes = await page.evaluate(`(() => { ${cmdFn}
+    const s = pageCmd('snapshot', null, null, null, false, 2000);
     const ref = s.elements.split('\\n').findIndex((l) => l.includes('"Go"'));
-    return pageAct('click', ref, null, null, false, 0);
+    return pageCmd('click', ref, null, null, false, 0);
   })()`);
   const clicked = await page.evaluate(() => window.__clicked || 0);
   check('click hits the button (synthetic pointer events + .click())', clickRes === 'clicked' && clicked === 1, JSON.stringify({ clickRes, clicked }));
 
-  const typeRes = await page.evaluate(`(() => { ${snapshotFn} ${actFn}
-    const r = pageAct('type', null, '#field', 'hello-123', false, 0);
+  const typeRes = await page.evaluate(`(() => { ${cmdFn}
+    const r = pageCmd('type', null, '#field', 'hello-123', false, 0);
     return { r, v: document.getElementById('field').value };
   })()`);
   check('type fills the input through the native setter', typeRes.r === 'typed' && typeRes.v === 'hello-123', JSON.stringify(typeRes));
 
-  const submitRes = await page.evaluate(`(() => { ${actFn}
-    return pageAct('type', null, '#f2', 'typed-too', true, 0);
+  const submitRes = await page.evaluate(`(() => { ${cmdFn}
+    return pageCmd('type', null, '#f2', 'typed-too', true, 0);
   })()`);
   const submitted = await page.evaluate(() => window.__submitted);
   check('type with submit sends the form', submitRes === 'typed' && submitted === 'typed-too', JSON.stringify({ submitRes, submitted }));
 
   const scrollBefore = await page.evaluate(() => scrollY);
-  await page.evaluate(`(() => { ${actFn} return pageAct('scroll', null, null, null, false, 600); })()`);
+  await page.evaluate(`(() => { ${cmdFn} return pageCmd('scroll', null, null, null, false, 600); })()`);
   const scrollAfter = await page.evaluate(() => scrollY);
   check('scroll moves the page', scrollAfter > scrollBefore, JSON.stringify({ scrollBefore, scrollAfter }));
 

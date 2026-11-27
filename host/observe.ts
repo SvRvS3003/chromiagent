@@ -57,3 +57,29 @@ async function untilEvent(tabId: number, match: (e: PageEvent) => boolean, secon
   await observe(tabId, (events) => { found = events.find(match) ?? null; return found !== null; }, { seconds });
   return found;
 }
+
+interface PageView {
+  title: string;
+  url: string;
+  text: string;
+  elements: string;
+  overlays: string;
+  selects: string;
+  frames: string;
+  shadows: string;
+  scrollY: number;
+  pageHeight: number;
+}
+
+// A fresh, parsed look at the page. Includes dialogs, popovers, native select options, shadow roots and
+// same-origin frames. Call it before every action, and again after, instead of trusting a layout you saw.
+async function view(tabId: number, maxChars = 15000): Promise<PageView> {
+  return JSON.parse(await chrome.read_page({ tabId, maxChars })) as PageView;
+}
+
+// Finds the ref of an element by visible text or label from a view: refFor(v, 'Add to cart').
+function refFor(v: PageView, text: string): number | null {
+  const line = v.elements.split('\n').find((l) => l.includes(text));
+  const m = line && line.match(/^\[(\d+)\]/);
+  return m ? Number(m[1]) : null;
+}
