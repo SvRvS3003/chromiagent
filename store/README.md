@@ -3,11 +3,18 @@
 The ZIP in this folder is ready to upload. The browser side installs from the store; the local host
 still needs the installer, so the listing explains both steps.
 
+## Register first (one time)
+
+1. Open https://chrome.google.com/webstore/devconsole and sign in with the Google account you want
+   to own the item. Use an address you check regularly — the developer email cannot be changed later.
+2. Accept the developer agreement and pay the one-time registration fee. Uzbekistan is on the list of
+   supported countries. Enable 2-step verification on that Google account if asked.
+3. Fill in the developer profile (name shown on the listing, contact email). A new publisher can have
+   up to two published items; that is enough here.
+
 ## Before uploading
 
-1. Register a Chrome Web Store developer account at https://chrome.google.com/webstore/devconsole
-   (one-time registration fee; Uzbekistan is a supported country).
-2. Open `LISTING.md`: short description, full description, single purpose, permission justifications,
+1. Open `LISTING.md`: short description, full description, single purpose, permission justifications,
    data-use declarations, test instructions and privacy URL are all written out.
 3. Use `PRIVACY.md` as the public privacy-policy URL (the GitHub link works as-is).
 4. Choose **unlisted** distribution if you only want people with the link to install it. Review still
